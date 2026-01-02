@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db'
 
 export async function GET(
   req: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     // Check authentication
@@ -17,9 +17,12 @@ export async function GET(
       )
     }
 
+    // Await params in Next.js 15+
+    const { id } = await params
+
     // Get opportunity with related data
     const opportunity = await prisma.opportunity.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         bids: {
           orderBy: { createdAt: 'desc' },

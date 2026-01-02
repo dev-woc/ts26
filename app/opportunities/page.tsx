@@ -1,10 +1,10 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import OpportunityCard from '@/components/opportunities/OpportunityCard'
 
-export default function OpportunitiesPage() {
+function OpportunitiesContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -234,5 +234,20 @@ export default function OpportunitiesPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function OpportunitiesPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+          <p className="mt-4 text-gray-600">Loading opportunities...</p>
+        </div>
+      </div>
+    }>
+      <OpportunitiesContent />
+    </Suspense>
   )
 }
