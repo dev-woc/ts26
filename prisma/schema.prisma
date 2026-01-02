@@ -1,0 +1,267 @@
+// Prisma schema for USHER Next.js Application
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL") // uses connection pooling
+  directUrl = env("POSTGRES_URL_NON_POOLING") // uses a direct connection
+}
+
+// ============ USERS & AUTHENTICATION ============
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  password      String?   // Hashed, nullable for OAuth users
+  emailVerified DateTime?
+  image         String?
+  role          UserRole  @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  opportunities OpportunityWatch[]
+  bids          Bid[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  VIEWER
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ============ OPPORTUNITIES ============
+
+model Opportunity {
+  id                  String   @id @default(cuid())
+
+  // SAM.gov Data
+  solicitationNumber  String   @unique
+  title               String
+  description         String?  @db.Text
+  naicsCode           String?
+  agency              String?
+  department          String?
+  state               String?
+
+  // Dates
+  postedDate          DateTime?
+  responseDeadline    DateTime?
+  lastFetched         DateTime @default(now())
+
+  // Status
+  status              OpportunityStatus @default(ACTIVE)
+
+  // Metadata
+  rawData             Json?    // Store full SAM.gov response
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations
+  bids                Bid[]
+  watchers            OpportunityWatch[]
+  subcontractors      Subcontractor[]
+
+  @@index([solicitationNumber])
+  @@index([responseDeadline])
+  @@index([status])
+  @@index([naicsCode])
+  @@map("opportunities")
+}
+
+enum OpportunityStatus {
+  ACTIVE
+  EXPIRED
+  AWARDED
+  CANCELLED
+}
+
+model OpportunityWatch {
+  id              String       @id @default(cuid())
+  userId          String
+  opportunityId   String
+  createdAt       DateTime     @default(now())
+
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  opportunity     Opportunity  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, opportunityId])
+  @@map("opportunity_watches")
+}
+
+// ============ SUBCONTRACTORS ============
+
+model Subcontractor {
+  id              String   @id @default(cuid())
+  opportunityId   String
+
+  // Business Info
+  name            String
+  phone           String?
+  email           String?
+  website         String?
+  address         String?
+
+  // Google Places Data
+  placeId         String?
+  rating          Float?
+  totalRatings    Int?
+  businessStatus  String?
+
+  // Categorization
+  service         String?
+  location        String?
+  naicsCode       String?
+  source          String?  // 'google_places_api' or 'simulated'
+
+  // SOW
+  sowUrl          String?  // Vercel Blob URL
+  sowGeneratedAt  DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([opportunityId])
+  @@map("subcontractors")
+}
+
+// ============ BIDS & PRICING ============
+
+model Bid {
+  id                    String   @id @default(cuid())
+  opportunityId         String
+  userId                String?  // Who created/reviewed this bid
+
+  // Pricing Data
+  recommendedPrice      Float
+  costBasis             Float?
+  potentialProfit       Float?
+  grossMargin           Float?
+  priceRange            String?
+
+  // Analysis
+  profitabilityRating   String?  // 'Excellent', 'Good', 'Moderate', 'Low', 'Marginal'
+  opportunitySize       String?  // 'Large', 'Medium', 'Small', 'Micro'
+  withinCapabilities    Boolean  @default(false)
+
+  // Metadata
+  confidence            String?  // 'high', 'low', 'very_low'
+  source                String?  // 'subcontractor_quotes', 'industry_average', 'default_fallback'
+  notes                 String?  @db.Text
+
+  // Historical Pricing Data
+  historicalData        Json?    // USASpending API results
+
+  // Subcontractor Quotes
+  subcontractorQuotes   Json?    // Array of quote amounts
+  quotesCount           Int?
+
+  // Status
+  status                BidStatus @default(DRAFT)
+  submittedAt           DateTime?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  opportunity           Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  user                  User?       @relation(fields: [userId], references: [id])
+
+  @@index([opportunityId])
+  @@index([status])
+  @@map("bids")
+}
+
+enum BidStatus {
+  DRAFT
+  REVIEWED
+  SUBMITTED
+  AWARDED
+  REJECTED
+}
+
+// ============ SYSTEM LOGS ============
+
+model SystemLog {
+  id          String   @id @default(cuid())
+  level       LogLevel
+  message     String
+  context     Json?    // Additional context data
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([level])
+  @@map("system_logs")
+}
+
+enum LogLevel {
+  INFO
+  WARNING
+  ERROR
+  DEBUG
+}
+
+// ============ CRON JOBS ============
+
+model CronJob {
+  id              String    @id @default(cuid())
+  name            String    @unique
+  lastRunAt       DateTime?
+  lastRunStatus   String?
+  nextRunAt       DateTime?
+  enabled         Boolean   @default(true)
+  config          Json?     // Job-specific configuration
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("cron_jobs")
+}

@@ -1,0 +1,26 @@
+{
+  "buildCommand": "prisma generate && next build",
+  "devCommand": "next dev",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+
+  "functions": {
+    "api/python/*.py": {
+      "runtime": "python3.9",
+      "maxDuration": 60
+    }
+  },
+
+  "crons": [
+    {
+      "path": "/api/cron/fetch-opportunities",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/update-expired-opportunities",
+      "schedule": "0 0 * * *"
+    }
+  ],
+
+  "regions": ["iad1"]
+}
