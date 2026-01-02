@@ -5,8 +5,8 @@
   "framework": "nextjs",
 
   "functions": {
-    "api/python/*.py": {
-      "runtime": "python3.9",
+    "api/python/**/*.py": {
+      "runtime": "python@3.9",
       "maxDuration": 60
     }
   },
