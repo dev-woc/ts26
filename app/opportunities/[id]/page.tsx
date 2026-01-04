@@ -10,6 +10,7 @@ export default function OpportunityDetailPage() {
   const [opportunity, setOpportunity] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [creatingBid, setCreatingBid] = useState(false)
 
   useEffect(() => {
     fetchOpportunity()
@@ -31,6 +32,42 @@ export default function OpportunityDetailPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleCreateBid = async () => {
+    setCreatingBid(true)
+    try {
+      const response = await fetch('/api/bids', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          opportunityId: opportunity.id,
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create bid')
+      }
+
+      const data = await response.json()
+
+      // Refresh the opportunity to show the new bid
+      await fetchOpportunity()
+
+      alert('Bid created successfully!')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to create bid')
+    } finally {
+      setCreatingBid(false)
+    }
+  }
+
+  const handleFindSubcontractors = () => {
+    alert('Subcontractor discovery coming in Phase 3!')
+  }
+
+  const handleGenerateSOW = () => {
+    alert('SOW generation coming in Phase 4!')
   }
 
   if (loading) {
@@ -220,13 +257,23 @@ export default function OpportunityDetailPage() {
             <div className="bg-white rounded-lg shadow p-6">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Actions</h2>
               <div className="space-y-3">
-                <button className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
-                  Create Bid
+                <button
+                  onClick={handleCreateBid}
+                  disabled={creatingBid}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {creatingBid ? 'Creating...' : 'Create Bid'}
                 </button>
-                <button className="w-full px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50">
+                <button
+                  onClick={handleFindSubcontractors}
+                  className="w-full px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+                >
                   Find Subcontractors
                 </button>
-                <button className="w-full px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50">
+                <button
+                  onClick={handleGenerateSOW}
+                  className="w-full px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+                >
                   Generate SOW
                 </button>
               </div>
