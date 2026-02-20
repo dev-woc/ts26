@@ -101,6 +101,77 @@ Thank you,
   },
 }
 
+// ─── Attachment Preview Modal ────────────────────────────────────────────────
+
+function AttachmentPreviewModal({
+  attachment,
+  opportunityId,
+  onClose,
+}: {
+  attachment: RichAttachment
+  opportunityId: string
+  onClose: () => void
+}) {
+  const proxyUrl = `/api/opportunities/${opportunityId}/attachments/${attachment.id}/proxy`
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-stone-900/90" onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-4 py-3 bg-stone-900 border-b border-stone-700 flex-shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <svg className="h-4 w-4 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+          </svg>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-white truncate">{attachment.originalName}</p>
+            {attachment.isEdited && (
+              <p className="text-xs text-stone-400 truncate">Working name: {attachment.currentName}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <a
+            href={proxyUrl}
+            download={attachment.currentName}
+            className="px-3 py-1.5 text-xs font-medium text-stone-300 border border-stone-600 rounded-lg hover:bg-stone-700 transition-colors flex items-center gap-1.5"
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Download
+          </a>
+          <button
+            onClick={onClose}
+            className="p-1.5 text-stone-400 hover:text-white hover:bg-stone-700 rounded-lg transition-colors"
+            aria-label="Close preview"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {/* iframe */}
+      <div className="flex-1 min-h-0">
+        <iframe
+          src={proxyUrl}
+          className="w-full h-full border-0"
+          title={attachment.originalName}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ─── Main Panel ──────────────────────────────────────────────────────────────
+
 export default function EmailDraftPanel({
   recipientName = '',
   recipientEmail = '',
@@ -123,6 +194,7 @@ export default function EmailDraftPanel({
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
   const [selectedTemplate, setSelectedTemplate] = useState(templateType)
+  const [previewAttachment, setPreviewAttachment] = useState<RichAttachment | null>(null)
 
   // Local attachment selection state — used when parent doesn't control it
   const [localSelected, setLocalSelected] = useState<Set<string>>(() =>
@@ -198,91 +270,104 @@ export default function EmailDraftPanel({
     }
   }
 
-  const hasAttachmentSection = !!(sowFileName || (availableAttachments && availableAttachments.length > 0))
   const totalAttachments = availableAttachments?.length ?? 0
   const selectedCount = selectedAttachments.size
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <div className="max-w-2xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-stone-900">Email Draft</h1>
-          <select
-            value={selectedTemplate}
-            onChange={(e) => setSelectedTemplate(e.target.value as any)}
-            className="text-sm text-stone-600 bg-stone-100 border-0 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-stone-300"
-          >
-            <option value="quote_request">Quote Request</option>
-            <option value="sow_delivery">SOW Delivery</option>
-            <option value="follow_up">Follow Up</option>
-            <option value="custom">Custom</option>
-          </select>
-        </div>
+    <>
+      {/* Attachment Preview Modal */}
+      {previewAttachment && opportunityId && (
+        <AttachmentPreviewModal
+          attachment={previewAttachment}
+          opportunityId={opportunityId}
+          onClose={() => setPreviewAttachment(null)}
+        />
+      )}
 
-        {/* SOW Synopsis Preview */}
-        {sowSynopsis && (
-          <div className="p-4 bg-stone-50 border border-stone-200 rounded-lg">
-            <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
-              SOW Synopsis (included in email)
-            </h3>
-            <div className="text-sm text-stone-700 space-y-1">
-              {sowSynopsis.split('\n• ').map((line, idx) => (
-                <div key={idx} className="flex items-start gap-2">
-                  <span className="text-stone-400">•</span>
-                  <span>{line.replace(/^• /, '')}</span>
-                </div>
-              ))}
+      <div className="h-full overflow-auto p-6">
+        <div className="max-w-2xl mx-auto space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <h1 className="text-lg font-semibold text-stone-900">Email Draft</h1>
+            <select
+              value={selectedTemplate}
+              onChange={(e) => setSelectedTemplate(e.target.value as any)}
+              className="text-sm text-stone-600 bg-stone-100 border-0 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-stone-300"
+            >
+              <option value="quote_request">Quote Request</option>
+              <option value="sow_delivery">SOW Delivery</option>
+              <option value="follow_up">Follow Up</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+
+          {/* SOW Synopsis Preview */}
+          {sowSynopsis && (
+            <div className="p-4 bg-stone-50 border border-stone-200 rounded-lg">
+              <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide mb-2">
+                SOW Synopsis (included in email)
+              </h3>
+              <div className="text-sm text-stone-700 space-y-1">
+                {sowSynopsis.split('\n• ').map((line, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="text-stone-400">•</span>
+                    <span>{line.replace(/^• /, '')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Email form */}
+          <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
+            <div className="px-4 py-3 border-b border-stone-100 flex items-center gap-3">
+              <span className="text-xs text-stone-400 w-12">To</span>
+              <input
+                type="email"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                placeholder="recipient@example.com"
+                className="flex-1 text-sm text-stone-800 bg-transparent border-0 outline-none placeholder-stone-300"
+              />
+            </div>
+            <div className="px-4 py-3 border-b border-stone-100 flex items-center gap-3">
+              <span className="text-xs text-stone-400 w-12">Subject</span>
+              <input
+                type="text"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Email subject"
+                className="flex-1 text-sm text-stone-800 bg-transparent border-0 outline-none placeholder-stone-300"
+              />
+            </div>
+            <div className="p-4">
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                rows={12}
+                placeholder="Email content..."
+                className="w-full text-sm text-stone-800 bg-transparent border-0 outline-none resize-none placeholder-stone-300 leading-relaxed"
+              />
             </div>
           </div>
-        )}
 
-        {/* Email form */}
-        <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-stone-100 flex items-center gap-3">
-            <span className="text-xs text-stone-400 w-12">To</span>
-            <input
-              type="email"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="recipient@example.com"
-              className="flex-1 text-sm text-stone-800 bg-transparent border-0 outline-none placeholder-stone-300"
-            />
-          </div>
-          <div className="px-4 py-3 border-b border-stone-100 flex items-center gap-3">
-            <span className="text-xs text-stone-400 w-12">Subject</span>
-            <input
-              type="text"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              placeholder="Email subject"
-              className="flex-1 text-sm text-stone-800 bg-transparent border-0 outline-none placeholder-stone-300"
-            />
-          </div>
-          <div className="p-4">
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={12}
-              placeholder="Email content..."
-              className="w-full text-sm text-stone-800 bg-transparent border-0 outline-none resize-none placeholder-stone-300 leading-relaxed"
-            />
-          </div>
-        </div>
-
-        {/* Attachment Picker */}
-        {hasAttachmentSection && (
-          <div className="p-4 bg-white border border-stone-200 rounded-lg">
-            {/* Header row with select all + count */}
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold text-stone-500 uppercase tracking-wide">
-                Attachments
-              </h3>
-              <div className="flex items-center gap-3">
+          {/* ── Attachment Bundle — only shown when SOW exists ── */}
+          {sowFileName && (
+            <div className="border border-stone-200 rounded-lg overflow-hidden">
+              {/* Bundle header */}
+              <div className="px-4 py-3 bg-stone-50 border-b border-stone-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="h-4 w-4 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                  <h3 className="text-xs font-semibold text-stone-600 uppercase tracking-wide">
+                    Attachment Bundle
+                  </h3>
+                </div>
                 {totalAttachments > 0 && (
-                  <>
+                  <div className="flex items-center gap-3">
                     <span className="text-xs text-stone-400">
-                      {selectedCount} of {totalAttachments} selected
+                      {selectedCount} of {totalAttachments} solicitation docs selected
                     </span>
                     <div className="flex gap-2">
                       <button
@@ -291,112 +376,149 @@ export default function EmailDraftPanel({
                         }
                         className="text-xs text-stone-500 hover:text-stone-700 underline underline-offset-2"
                       >
-                        Select All
+                        All
                       </button>
                       <button
                         onClick={() => setSelectedAttachments(new Set())}
                         className="text-xs text-stone-500 hover:text-stone-700 underline underline-offset-2"
                       >
-                        Deselect All
+                        None
                       </button>
                     </div>
-                  </>
+                  </div>
                 )}
               </div>
-            </div>
 
-            <div className="space-y-2">
-              {/* SOW — always-on, locked */}
-              {sowFileName && (
-                <div
-                  className="flex items-center gap-2.5"
-                  title="SOW is always included in this email"
-                >
-                  {/* Locked checkbox visual */}
+              <div className="divide-y divide-stone-100">
+                {/* SOW — always required, first in bundle */}
+                <div className="px-4 py-3 flex items-center gap-3 bg-white">
+                  {/* Locked checkbox */}
                   <div className="w-4 h-4 rounded border border-stone-300 bg-stone-100 flex items-center justify-center flex-shrink-0">
                     <svg className="h-3 w-3 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                     </svg>
                   </div>
-                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                    <svg className="h-3.5 w-3.5 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span className="text-sm text-stone-700 truncate">{sowFileName}</span>
-                    <span className="text-[10px] text-stone-400 font-medium">SOW</span>
-                    {/* Lock icon */}
-                    <svg
-                      className="h-3 w-3 text-stone-400 flex-shrink-0"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                      aria-label="SOW is always included"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                    </svg>
+                  <svg className="h-3.5 w-3.5 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="flex-1 text-sm text-stone-800 truncate font-medium">{sowFileName}</span>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <span className="text-[10px] text-stone-400 font-medium uppercase tracking-wide">SOW</span>
+                    <span title="SOW is always included">
+                      <svg
+                        className="h-3 w-3 text-stone-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                        aria-label="SOW is always included"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                      </svg>
+                    </span>
                   </div>
                 </div>
-              )}
 
-              {/* Solicitation attachments */}
-              {availableAttachments?.map((att) => (
-                <label key={att.id} className="flex items-center gap-2.5 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={selectedAttachments.has(att.id)}
-                    onChange={(e) => {
-                      const next = new Set(selectedAttachments)
-                      if (e.target.checked) next.add(att.id)
-                      else next.delete(att.id)
-                      setSelectedAttachments(next)
-                    }}
-                    className="w-4 h-4 rounded border-stone-300 text-stone-600 focus:ring-stone-300"
-                  />
-                  <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                    <svg className="h-3.5 w-3.5 text-stone-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                    </svg>
-                    <span className="text-sm text-stone-700 truncate">{att.currentName}</span>
-                    {att.size && (
-                      <span className="text-[10px] text-stone-400">{(att.size / 1024).toFixed(0)}KB</span>
-                    )}
-                  </div>
-                </label>
-              ))}
+                {/* Solicitation documents — optional */}
+                {availableAttachments && availableAttachments.length > 0 && (
+                  <>
+                    {/* Divider label */}
+                    <div className="px-4 py-2 bg-stone-50">
+                      <p className="text-[11px] font-medium text-stone-400 uppercase tracking-wide">
+                        Solicitation Documents
+                      </p>
+                    </div>
+
+                    {availableAttachments.map((att) => (
+                      <div key={att.id} className="px-4 py-3 flex items-center gap-3 bg-white hover:bg-stone-50 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={selectedAttachments.has(att.id)}
+                          onChange={(e) => {
+                            const next = new Set(selectedAttachments)
+                            if (e.target.checked) next.add(att.id)
+                            else next.delete(att.id)
+                            setSelectedAttachments(next)
+                          }}
+                          className="w-4 h-4 rounded border-stone-300 text-stone-600 focus:ring-stone-300 flex-shrink-0"
+                        />
+
+                        {/* Eyeball preview button */}
+                        <button
+                          onClick={() => setPreviewAttachment(att)}
+                          className="p-0.5 text-stone-300 hover:text-stone-600 transition-colors flex-shrink-0"
+                          title={`Preview ${att.originalName}`}
+                          aria-label="Preview attachment"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                        </button>
+
+                        <div className="flex-1 min-w-0">
+                          {/* Original SAM.gov filename — primary identifier */}
+                          <p className="text-sm text-stone-800 truncate">{att.originalName}</p>
+                          {/* Working name if renamed */}
+                          {att.isEdited && (
+                            <p className="text-[11px] text-stone-400 truncate">
+                              renamed → {att.currentName}
+                            </p>
+                          )}
+                        </div>
+
+                        {att.size && (
+                          <span className="text-[11px] text-stone-400 flex-shrink-0">
+                            {(att.size / 1024).toFixed(0)} KB
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
+
+              <div className="px-4 py-2.5 bg-stone-50 border-t border-stone-100">
+                <p className="text-[11px] text-stone-400">
+                  Attach selected documents manually if using your mail client.
+                </p>
+              </div>
             </div>
+          )}
 
-            {(sowFileName || selectedCount > 0) && (
-              <p className="mt-2.5 text-[11px] text-stone-400">
-                Attach selected documents manually if using mail client.
+          {/* No SOW yet — gentle prompt */}
+          {!sowFileName && (
+            <div className="p-4 border border-stone-200 rounded-lg bg-stone-50 text-center">
+              <p className="text-xs text-stone-400">
+                Generate a SOW first to build your attachment bundle.
               </p>
-            )}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-3">
+            <button
+              onClick={handleSend}
+              disabled={sending || !to || !subject || !body}
+              className="flex-1 px-4 py-3 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {sending ? 'Sending...' : 'Send Email'}
+            </button>
+            <button
+              onClick={() => {
+                const mailtoUrl = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+                window.open(mailtoUrl)
+              }}
+              className="px-4 py-3 text-sm font-medium text-stone-600 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors"
+            >
+              Open in Mail
+            </button>
           </div>
-        )}
 
-        {/* Actions */}
-        <div className="flex gap-3">
-          <button
-            onClick={handleSend}
-            disabled={sending || !to || !subject || !body}
-            className="flex-1 px-4 py-3 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {sending ? 'Sending...' : 'Send Email'}
-          </button>
-          <button
-            onClick={() => {
-              const mailtoUrl = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
-              window.open(mailtoUrl)
-            }}
-            className="px-4 py-3 text-sm font-medium text-stone-600 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors"
-          >
-            Open in Mail
-          </button>
+          <p className="text-xs text-stone-400 text-center">
+            Emails are not saved automatically. Use &quot;Open in Mail&quot; to use your default email client.
+          </p>
         </div>
-
-        <p className="text-xs text-stone-400 text-center">
-          Emails are not saved automatically. Use &quot;Open in Mail&quot; to use your default email client.
-        </p>
       </div>
-    </div>
+    </>
   )
 }
