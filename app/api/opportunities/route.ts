@@ -4,17 +4,12 @@ import { prisma } from '@/lib/db'
 
 export async function GET(req: Request) {
   try {
-    // Check authentication
     const session = await auth()
 
     if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Parse query parameters
     const { searchParams } = new URL(req.url)
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
@@ -23,8 +18,31 @@ export async function GET(req: Request) {
     const agency = searchParams.get('agency')
     const status = searchParams.get('status') || 'ACTIVE'
 
-    // Build where clause
+    // Advanced filter params
+    const hasSOW = searchParams.get('hasSOW')           // 'yes' | 'no' | null
+    const hasBid = searchParams.get('hasBid')           // 'yes' | 'no' | null
+    const recommendation = searchParams.get('recommendation') // 'GO' | 'REVIEW' | 'NO_GO' | null
+    const deadlineDays = searchParams.get('deadlineDays')     // '7' | '14' | '30' | '60' | null
+    const minMargin = parseFloat(searchParams.get('minMargin') || '')
+    const maxMargin = parseFloat(searchParams.get('maxMargin') || '')
+
+    // Legacy params
+    const minDaysUntilClose = parseInt(searchParams.get('minDays') || '14')
+    const showExpiring = searchParams.get('showExpiring') === 'true'
+
     const where: any = {}
+
+    // Deadline filter — deadlineDays takes priority over showExpiring/minDays
+    if (deadlineDays) {
+      const now = new Date()
+      const maxDate = new Date()
+      maxDate.setDate(maxDate.getDate() + parseInt(deadlineDays))
+      where.responseDeadline = { gte: now, lte: maxDate }
+    } else if (!showExpiring && minDaysUntilClose > 0) {
+      const cutoffDate = new Date()
+      cutoffDate.setDate(cutoffDate.getDate() + minDaysUntilClose)
+      where.responseDeadline = { gte: cutoffDate }
+    }
 
     if (status) {
       where.status = status
@@ -46,15 +64,39 @@ export async function GET(req: Request) {
       where.agency = { contains: agency, mode: 'insensitive' }
     }
 
-    // Get total count
+    // hasSOW filter
+    if (hasSOW === 'yes') {
+      where.sows = { some: {} }
+    } else if (hasSOW === 'no') {
+      where.sows = { none: {} }
+    }
+
+    // hasBid filter
+    if (hasBid === 'yes') {
+      where.bids = { some: {} }
+    } else if (hasBid === 'no') {
+      where.bids = { none: {} }
+    }
+
+    // Assessment-based filters (recommendation + margin)
+    const assessmentWhere: any = {}
+    if (recommendation && recommendation !== 'all') {
+      assessmentWhere.recommendation = recommendation
+    }
+    if (!isNaN(minMargin) || !isNaN(maxMargin)) {
+      assessmentWhere.profitMarginPercent = {}
+      if (!isNaN(minMargin)) assessmentWhere.profitMarginPercent.gte = minMargin
+      if (!isNaN(maxMargin)) assessmentWhere.profitMarginPercent.lte = maxMargin
+    }
+    if (Object.keys(assessmentWhere).length > 0) {
+      where.assessment = assessmentWhere
+    }
+
     const total = await prisma.opportunity.count({ where })
 
-    // Get opportunities with pagination
     const opportunities = await prisma.opportunity.findMany({
       where,
-      orderBy: {
-        responseDeadline: 'asc',
-      },
+      orderBy: { responseDeadline: 'asc' },
       skip: (page - 1) * limit,
       take: limit,
       include: {
@@ -62,7 +104,28 @@ export async function GET(req: Request) {
           select: {
             bids: true,
             subcontractors: true,
+            sows: true,
           },
+        },
+        assessment: {
+          select: {
+            estimatedValue: true,
+            estimatedCost: true,
+            profitMarginPercent: true,
+            profitMarginDollar: true,
+            recommendation: true,
+            strategicValue: true,
+            riskLevel: true,
+          },
+        },
+        bids: {
+          select: {
+            source: true,
+            confidence: true,
+            historicalData: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
         },
       },
     })
@@ -77,10 +140,8 @@ export async function GET(req: Request) {
         totalPages: Math.ceil(total / limit),
       },
     })
-
   } catch (error) {
     console.error('Error fetching opportunities:', error)
-
     return NextResponse.json(
       {
         success: false,
