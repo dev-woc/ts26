@@ -15,7 +15,7 @@ model User {
   id            String    @id @default(cuid())
   email         String    @unique
   name          String?
-  password      String?   // Hashed, nullable for OAuth users
+  password      String? // Hashed, nullable for OAuth users
   emailVerified DateTime?
   image         String?
   role          UserRole  @default(USER)
@@ -27,6 +27,20 @@ model User {
   sessions      Session[]
   opportunities OpportunityWatch[]
   bids          Bid[]
+
+  // SOW Relations
+  generatedSOWs SOW[]         @relation("SOWGenerator")
+  assignedSOWs  SOW[]         @relation("SOWApprover")
+  sowApprovals  SOWApproval[]
+  sowVersions   SOWVersion[]
+  sowActivities SOWActivity[]
+
+  // Assessment Relations
+  assessments OpportunityAssessment[] @relation("AssessmentAuthor")
+
+  // Attachment Rename Relations
+  attachmentOverrides AttachmentOverride[]
+  attachmentEdits     AttachmentEditHistory[]
 
   @@map("users")
 }
@@ -79,34 +93,39 @@ model VerificationToken {
 // ============ OPPORTUNITIES ============
 
 model Opportunity {
-  id                  String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // SAM.gov Data
-  solicitationNumber  String   @unique
-  title               String
-  description         String?  @db.Text
-  naicsCode           String?
-  agency              String?
-  department          String?
-  state               String?
+  solicitationNumber String  @unique
+  title              String
+  description        String? @db.Text
+  naicsCode          String?
+  agency             String?
+  department         String?
+  state              String?
 
   // Dates
-  postedDate          DateTime?
-  responseDeadline    DateTime?
-  lastFetched         DateTime @default(now())
+  postedDate       DateTime?
+  responseDeadline DateTime?
+  lastFetched      DateTime  @default(now())
 
   // Status
-  status              OpportunityStatus @default(ACTIVE)
+  status OpportunityStatus @default(ACTIVE)
 
   // Metadata
-  rawData             Json?    // Store full SAM.gov response
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  rawData            Json? // Store full SAM.gov response
+  parsedAttachments  Json? // Cached parsed text from solicitation attachments
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
   bids                Bid[]
   watchers            OpportunityWatch[]
   subcontractors      Subcontractor[]
+  sows                SOW[]
+  progress            OpportunityProgress?
+  assessment          OpportunityAssessment?
+  attachmentOverrides AttachmentOverride[]
 
   @@index([solicitationNumber])
   @@index([responseDeadline])
@@ -123,96 +142,223 @@ enum OpportunityStatus {
 }
 
 model OpportunityWatch {
-  id              String       @id @default(cuid())
-  userId          String
-  opportunityId   String
-  createdAt       DateTime     @default(now())
+  id            String   @id @default(cuid())
+  userId        String
+  opportunityId String
+  createdAt     DateTime @default(now())
 
-  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  opportunity     Opportunity  @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 
   @@unique([userId, opportunityId])
   @@map("opportunity_watches")
 }
 
+// ============ OPPORTUNITY PROGRESS ============
+
+model OpportunityProgress {
+  id            String   @id @default(cuid())
+  opportunityId String   @unique
+
+  // Progress Tracking
+  currentStage  Stage    @default(DISCOVERY)
+  completionPct Int      @default(0)
+
+  // Blockers and Next Actions
+  blockers    Json? // Array of blocker objects: [{ id, description, severity }]
+  nextActions Json? // Array of action objects: [{ id, description, priority, assignedTo }]
+
+  // Metadata
+  lastUpdated DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  // Relations
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@index([currentStage])
+  @@index([opportunityId])
+  @@map("opportunity_progress")
+}
+
+enum Stage {
+  DISCOVERY    // Opportunity identified
+  ASSESSMENT   // Margin analysis in progress
+  SOW_CREATION // Generating SOW
+  SOW_REVIEW   // Awaiting approval
+  BID_ASSEMBLY // Creating bid package
+  READY        // Ready to submit
+  SUBMITTED    // Submitted to government
+}
+
+// ============ OPPORTUNITY ASSESSMENT ============
+
+model OpportunityAssessment {
+  id            String   @id @default(cuid())
+  opportunityId String   @unique
+
+  // Financial Analysis
+  estimatedValue      Float? // Contract value from SAM.gov or estimate
+  estimatedCost       Float? // Our cost to complete
+  profitMarginDollar  Float? // Calculated: estimatedValue - estimatedCost
+  profitMarginPercent Float? // Calculated: (profitMarginDollar / estimatedValue) * 100
+
+  // Qualification
+  meetsMarginTarget Boolean           @default(false)
+  strategicValue    StrategicValue?   // How valuable is this strategically
+  riskLevel         RiskLevel?        // Risk assessment
+
+  // Decision
+  recommendation String?   @db.Text // GO, NO_GO, REVIEW
+  notes          String?   @db.Text
+  assessedAt     DateTime  @default(now())
+  assessedById   String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  assessedBy  User        @relation("AssessmentAuthor", fields: [assessedById], references: [id])
+
+  @@index([opportunityId])
+  @@index([recommendation])
+  @@index([meetsMarginTarget])
+  @@map("opportunity_assessments")
+}
+
+enum StrategicValue {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum RiskLevel {
+  HIGH
+  MEDIUM
+  LOW
+}
+
 // ============ SUBCONTRACTORS ============
 
 model Subcontractor {
-  id              String   @id @default(cuid())
-  opportunityId   String
+  id            String @id @default(cuid())
+  opportunityId String
 
   // Business Info
-  name            String
-  phone           String?
-  email           String?
-  website         String?
-  address         String?
+  name    String
+  phone   String?
+  email   String?
+  website String?
+  address String?
+
+  // Verification
+  verificationStatus String   @default("unverified") // "verified", "unverified", "user_verified"
+  verifiedAt         DateTime?
+  verifiedBy         String?  // "sam_gov", "user", "google_maps"
+  lastVerifiedAt     DateTime?
+  confidenceLevel    String?  // "high", "medium", "low"
+
+  // Direct POC (from SAM.gov)
+  contactName  String?
+  contactTitle String?
+  contactEmail String?
+  contactPhone String?
+
+  // SAM.gov Data
+  ueiNumber            String?
+  samRegistrationStatus String?
+  certifications       Json?    // ["8(a)", "HUBZone", "WOSB", "SDVOSB", etc.]
+  cageCode             String?
+  entityStartDate      String?
+  congressionalDistrict String?
 
   // Google Places Data
-  placeId         String?
-  rating          Float?
-  totalRatings    Int?
-  businessStatus  String?
+  placeId        String?
+  rating         Float?
+  totalRatings   Int?
+  businessStatus String?
+
+  // Google Maps Enrichment
+  googleRating         Float?
+  googleTotalReviews   Int?
+  googleBusinessStatus String?
+  googleBusinessHours  Json?
+  googleEnrichedAt     DateTime?
 
   // Categorization
-  service         String?
-  location        String?
-  naicsCode       String?
-  source          String?  // 'google_places_api' or 'simulated'
+  service   String?
+  location  String?
+  naicsCode String?
+  source    String? // 'sam_gov', 'google_places', 'manual'
+
+  // Vendor Workflow
+  callCompleted   Boolean   @default(false)
+  callCompletedAt DateTime?
+
+  // Quote Information
+  quotedAmount    Float?
+  quoteReceivedAt DateTime?
+  quoteNotes      String?   @db.Text
+  isActualQuote   Boolean   @default(false) // vs intelligent estimate
 
   // SOW
-  sowUrl          String?  // Vercel Blob URL
-  sowGeneratedAt  DateTime?
+  sowUrl         String? // Vercel Blob URL
+  sowGeneratedAt DateTime?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  opportunity     Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
 
   @@index([opportunityId])
+  @@index([verificationStatus])
   @@map("subcontractors")
 }
 
 // ============ BIDS & PRICING ============
 
 model Bid {
-  id                    String   @id @default(cuid())
-  opportunityId         String
-  userId                String?  // Who created/reviewed this bid
+  id            String  @id @default(cuid())
+  opportunityId String
+  userId        String? // Who created/reviewed this bid
 
   // Pricing Data
-  recommendedPrice      Float
-  costBasis             Float?
-  potentialProfit       Float?
-  grossMargin           Float?
-  priceRange            String?
+  recommendedPrice Float
+  costBasis        Float?
+  potentialProfit  Float?
+  grossMargin      Float?
+  priceRange       String?
 
   // Analysis
-  profitabilityRating   String?  // 'Excellent', 'Good', 'Moderate', 'Low', 'Marginal'
-  opportunitySize       String?  // 'Large', 'Medium', 'Small', 'Micro'
-  withinCapabilities    Boolean  @default(false)
+  profitabilityRating String? // 'Excellent', 'Good', 'Moderate', 'Low', 'Marginal'
+  opportunitySize     String? // 'Large', 'Medium', 'Small', 'Micro'
+  withinCapabilities  Boolean @default(false)
 
   // Metadata
-  confidence            String?  // 'high', 'low', 'very_low'
-  source                String?  // 'subcontractor_quotes', 'industry_average', 'default_fallback'
-  notes                 String?  @db.Text
+  confidence String? // 'high', 'low', 'very_low'
+  source     String? // 'subcontractor_quotes', 'industry_average', 'default_fallback'
+  notes      String? @db.Text
 
   // Historical Pricing Data
-  historicalData        Json?    // USASpending API results
+  historicalData Json? // USASpending API results
 
   // Subcontractor Quotes
-  subcontractorQuotes   Json?    // Array of quote amounts
-  quotesCount           Int?
+  subcontractorQuotes Json? // Array of quote amounts
+  quotesCount         Int?
+
+  // Structured document content (mirrors SOW)
+  content      Json?    // BidContent structure
+  documentUrl  String?  // Generated PDF URL
+  documentName String?
 
   // Status
-  status                BidStatus @default(DRAFT)
-  submittedAt           DateTime?
+  status      BidStatus @default(DRAFT)
+  submittedAt DateTime?
 
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  opportunity           Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
-  user                  User?       @relation(fields: [userId], references: [id])
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id])
 
   @@index([opportunityId])
   @@index([status])
@@ -230,11 +376,11 @@ enum BidStatus {
 // ============ SYSTEM LOGS ============
 
 model SystemLog {
-  id          String   @id @default(cuid())
-  level       LogLevel
-  message     String
-  context     Json?    // Additional context data
-  createdAt   DateTime @default(now())
+  id        String   @id @default(cuid())
+  level     LogLevel
+  message   String
+  context   Json? // Additional context data
+  createdAt DateTime @default(now())
 
   @@index([createdAt])
   @@index([level])
@@ -251,16 +397,240 @@ enum LogLevel {
 // ============ CRON JOBS ============
 
 model CronJob {
-  id              String    @id @default(cuid())
-  name            String    @unique
-  lastRunAt       DateTime?
-  lastRunStatus   String?
-  nextRunAt       DateTime?
-  enabled         Boolean   @default(true)
-  config          Json?     // Job-specific configuration
+  id            String    @id @default(cuid())
+  name          String    @unique
+  lastRunAt     DateTime?
+  lastRunStatus String?
+  nextRunAt     DateTime?
+  enabled       Boolean   @default(true)
+  config        Json? // Job-specific configuration
 
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("cron_jobs")
+}
+
+// ============ SOW MANAGEMENT ============
+
+model SOW {
+  id            String @id @default(cuid())
+  opportunityId String
+  version       Int    @default(1)
+
+  // File Storage (Vercel Blob)
+  fileUrl  String?
+  fileName String?
+  fileSize Int?
+
+  // Structured Content (JSON with sections, paragraphs, etc.)
+  content Json?
+
+  // Status Tracking
+  status SOWStatus @default(DRAFT)
+
+  // Generation & Approval
+  generatedById     String?
+  generatedAt       DateTime @default(now())
+  currentApproverId String?
+
+  // Delivery Tracking
+  sentToEmail String?
+  sentAt      DateTime?
+  viewedAt    DateTime?
+  acceptedAt  DateTime?
+
+  // Metadata
+  notes     String?  @db.Text
+  metadata  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  opportunity     Opportunity   @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  generatedBy     User?         @relation("SOWGenerator", fields: [generatedById], references: [id])
+  currentApprover User?         @relation("SOWApprover", fields: [currentApproverId], references: [id])
+  approvals       SOWApproval[]
+  versions        SOWVersion[]
+  activities      SOWActivity[]
+
+  @@index([opportunityId])
+  @@index([status])
+  @@map("sows")
+}
+
+enum SOWStatus {
+  DRAFT // Initial creation, being edited
+  PENDING_REVIEW // Submitted for approval
+  APPROVED // Approved and ready to send
+  REJECTED // Rejected by reviewer
+  SENT // Sent to subcontractor
+  VIEWED // Subcontractor viewed
+  ACCEPTED // Subcontractor accepted
+  SUPERSEDED // Replaced by newer version
+}
+
+model SOWApproval {
+  id         String         @id @default(cuid())
+  sowId      String
+  approverId String
+  action     ApprovalAction
+  comments   String?        @db.Text
+  createdAt  DateTime       @default(now())
+
+  sow      SOW  @relation(fields: [sowId], references: [id], onDelete: Cascade)
+  approver User @relation(fields: [approverId], references: [id])
+
+  @@index([sowId])
+  @@map("sow_approvals")
+}
+
+enum ApprovalAction {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+model SOWVersion {
+  id             String   @id @default(cuid())
+  sowId          String
+  versionNumber  Int
+  changesSummary String   @db.Text
+  fileUrl        String
+  fileName       String
+  fileSize       Int?
+  createdById    String
+  createdAt      DateTime @default(now())
+
+  sow       SOW  @relation(fields: [sowId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@unique([sowId, versionNumber])
+  @@index([sowId])
+  @@map("sow_versions")
+}
+
+model SOWActivity {
+  id          String       @id @default(cuid())
+  sowId       String
+  type        ActivityType
+  description String       @db.Text
+  userId      String?
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+
+  sow  SOW   @relation(fields: [sowId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([sowId])
+  @@index([createdAt])
+  @@map("sow_activities")
+}
+
+enum ActivityType {
+  CREATED
+  UPDATED
+  APPROVED
+  REJECTED
+  SENT
+  VIEWED
+  ACCEPTED
+  VERSION_CREATED
+  COMMENT_ADDED
+}
+
+// ============ VENDOR CRM ============
+
+model Vendor {
+  id             String       @id @default(cuid())
+  name           String
+  email          String?
+  phone          String?
+  website        String?
+  address        String?
+  type           VendorType   @default(SUBCONTRACTOR)
+  status         VendorStatus @default(PROSPECT)
+  naicsCodes     String[]
+  certifications String[]
+  notes          String?      @db.Text
+  lastContacted  DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  communications VendorCommunication[]
+
+  @@map("vendors")
+}
+
+model VendorCommunication {
+  id        String            @id @default(cuid())
+  vendorId  String
+  type      CommunicationType
+  subject   String
+  content   String            @db.Text
+  sentAt    DateTime?
+  sowId     String?
+  createdAt DateTime          @default(now())
+
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("vendor_communications")
+}
+
+enum VendorType {
+  SUBCONTRACTOR
+  SUPPLIER
+  PARTNER
+  CONSULTANT
+}
+
+enum VendorStatus {
+  PROSPECT
+  ACTIVE
+  INACTIVE
+  BLACKLISTED
+}
+
+enum CommunicationType {
+  EMAIL
+  PHONE
+  MEETING
+  NOTE
+}
+
+// ============ ATTACHMENT OVERRIDES ============
+
+model AttachmentOverride {
+  id            String   @id @default(cuid())
+  opportunityId String
+  attachmentId  String   // SAM.gov attachment ID (e.g. "resource-0")
+  originalName  String   // From SAM.gov — never changes
+  currentName   String   // User-edited working name
+  editedById    String?
+  editedAt      DateTime @updatedAt
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  editedBy    User?       @relation(fields: [editedById], references: [id])
+  history     AttachmentEditHistory[]
+
+  @@unique([opportunityId, attachmentId])
+  @@index([opportunityId])
+  @@map("attachment_overrides")
+}
+
+model AttachmentEditHistory {
+  id           String   @id @default(cuid())
+  overrideId   String
+  previousName String
+  newName      String
+  editedById   String?
+  editedAt     DateTime @default(now())
+
+  override AttachmentOverride @relation(fields: [overrideId], references: [id], onDelete: Cascade)
+  editedBy User?              @relation(fields: [editedById], references: [id])
+
+  @@index([overrideId])
+  @@map("attachment_edit_history")
 }
