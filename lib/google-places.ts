@@ -93,34 +93,37 @@ const TITLE_KEYWORD_MAP: Record<string, string[]> = {
   'remediation': ['Environmental Remediation', 'Cleanup Services'],
 }
 
-// Approximate bounding boxes for US states: [south, west, north, east]
-const STATE_BOUNDS: Record<string, [number, number, number, number]> = {
-  AL: [30.14, -88.47, 35.01, -84.89], AK: [54.68, -179.15, 71.54, -129.99],
-  AZ: [31.33, -114.82, 37.00, -109.04], AR: [33.00, -94.62, 36.50, -89.64],
-  CA: [32.53, -124.41, 42.01, -114.13], CO: [36.99, -109.06, 41.00, -102.04],
-  CT: [40.95, -73.73, 42.05, -71.79], DE: [38.45, -75.79, 39.84, -75.05],
-  FL: [24.52, -87.63, 31.00, -80.03], GA: [30.36, -85.61, 35.00, -80.84],
-  HI: [18.86, -160.25, 22.24, -154.81], ID: [41.99, -117.24, 49.00, -111.04],
-  IL: [36.97, -91.51, 42.51, -87.02], IN: [37.77, -88.10, 41.76, -84.78],
-  IA: [40.38, -96.64, 43.50, -90.14], KS: [36.99, -102.05, 40.00, -94.59],
-  KY: [36.50, -89.57, 39.15, -81.96], LA: [28.93, -94.04, 33.02, -89.00],
-  ME: [43.06, -71.08, 47.46, -66.95], MD: [37.91, -79.49, 39.72, -75.05],
-  MA: [41.24, -73.51, 42.89, -69.93], MI: [41.70, -90.42, 48.31, -82.41],
-  MN: [43.50, -97.24, 49.38, -89.49], MS: [30.17, -91.65, 35.00, -88.10],
-  MO: [35.99, -95.77, 40.61, -89.10], MT: [44.36, -116.05, 49.00, -104.04],
-  NE: [40.00, -104.05, 43.00, -95.31], NV: [35.00, -120.00, 42.00, -114.04],
-  NH: [42.70, -72.56, 45.31, -70.61], NJ: [38.93, -75.57, 41.36, -73.89],
-  NM: [31.33, -109.05, 37.00, -103.00], NY: [40.50, -79.76, 45.02, -71.86],
-  NC: [33.84, -84.32, 36.59, -75.46], ND: [45.94, -104.05, 49.00, -96.55],
-  OH: [38.40, -84.82, 42.33, -80.52], OK: [33.62, -103.00, 37.00, -94.43],
-  OR: [41.99, -124.57, 46.24, -116.46], PA: [39.72, -80.52, 42.27, -74.69],
-  RI: [41.15, -71.86, 42.02, -71.12], SC: [32.04, -83.35, 35.22, -78.55],
-  SD: [42.48, -104.06, 45.95, -96.44], TN: [34.98, -90.31, 36.68, -81.65],
-  TX: [25.84, -106.65, 36.50, -93.51], UT: [36.99, -114.05, 42.00, -109.04],
-  VT: [42.73, -73.44, 45.02, -71.50], VA: [36.54, -83.68, 39.46, -75.24],
-  WA: [45.54, -124.73, 49.00, -116.92], WV: [37.20, -82.64, 40.64, -77.72],
-  WI: [42.49, -92.89, 47.08, -86.25], WY: [40.99, -111.06, 45.01, -104.05],
-  DC: [38.79, -77.12, 38.99, -76.91],
+// Full state names keyed by 2-letter code — used to match against formatted_address
+const STATE_NAMES: Record<string, string> = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas',
+  CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware',
+  FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho',
+  IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas',
+  KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi',
+  MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada',
+  NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York',
+  NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma',
+  OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah',
+  VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia',
+  WI: 'Wisconsin', WY: 'Wyoming', DC: 'District of Columbia',
+}
+
+/**
+ * Returns true when a Google formatted_address belongs to the given state.
+ * Google addresses look like: "123 Main St, Anchorage, AK 99501, USA"
+ * We match the 2-letter state code as a word boundary to avoid false hits
+ * (e.g. "MA" in "Omaha" or "IN" in "Indiana").
+ */
+function addressMatchesState(address: string, stateCode: string): boolean {
+  const code = stateCode.toUpperCase()
+  const name = STATE_NAMES[code]
+  // Match ", AK " or ", AK," — the code appears between comma+space and space/comma
+  const codeRegex = new RegExp(`,\\s+${code}(?:\\s|,)`)
+  if (codeRegex.test(address)) return true
+  if (name && address.toLowerCase().includes(name.toLowerCase())) return true
+  return false
 }
 
 export async function searchBusinesses(
@@ -138,16 +141,13 @@ export async function searchBusinesses(
 
   try {
     const url = new URL('https://maps.googleapis.com/maps/api/place/textsearch/json')
-    // Include location in the query text for relevance ranking
+    // Include the full place of performance in the text query — this is the
+    // primary signal the legacy Places API uses for geographic relevance.
     url.searchParams.set('query', `${query} ${location}`)
     url.searchParams.set('key', apiKey)
     url.searchParams.set('type', 'establishment')
-
-    // Add locationbias rectangle to constrain results to the state/region
-    if (stateCode && STATE_BOUNDS[stateCode.toUpperCase()]) {
-      const [south, west, north, east] = STATE_BOUNDS[stateCode.toUpperCase()]
-      url.searchParams.set('locationbias', `rectangle:${south},${west}|${north},${east}`)
-    }
+    // Request more results than needed so post-filtering has enough to work with
+    url.searchParams.set('maxResultCount', String(Math.min(maxResults * 4, 20)))
 
     console.log(`[Google Places] Searching for: "${query}" in "${location}"${stateCode ? ` (state: ${stateCode})` : ''} (API key: ${apiKey.substring(0, 8)}...)`)
 
@@ -168,19 +168,31 @@ export async function searchBusinesses(
       return []
     }
 
-    const businesses: PlaceSearchResult[] = data.results
-      .slice(0, maxResults)
-      .map((place: any) => ({
-        name: place.name || '',
-        address: place.formatted_address || '',
-        placeId: place.place_id || '',
-        types: place.types || [],
-        rating: place.rating || null,
-        totalRatings: place.user_ratings_total || null,
-      }))
+    const allResults: PlaceSearchResult[] = data.results.map((place: any) => ({
+      name: place.name || '',
+      address: place.formatted_address || '',
+      placeId: place.place_id || '',
+      types: place.types || [],
+      rating: place.rating || null,
+      totalRatings: place.user_ratings_total || null,
+    }))
 
-    console.log(`[Google Places] Found ${businesses.length} businesses for "${query}"`)
-    return businesses
+    // Post-filter by state: the legacy Places API text search does not
+    // restrict geographically — it only biases. We filter on the returned
+    // formatted_address which always contains the state code, e.g. "AK 99501".
+    let businesses: PlaceSearchResult[]
+    if (stateCode) {
+      businesses = allResults.filter(b => addressMatchesState(b.address, stateCode))
+      console.log(`[Google Places] ${allResults.length} raw results, ${businesses.length} in ${stateCode} for "${query}"`)
+      if (businesses.length === 0) {
+        // Log the addresses we rejected so it's easy to debug
+        console.log(`[Google Places] Rejected addresses: ${allResults.slice(0, 5).map(b => b.address).join(' | ')}`)
+      }
+    } else {
+      businesses = allResults
+    }
+
+    return businesses.slice(0, maxResults)
   } catch (error) {
     console.error('[Google Places] Search failed:', error)
     return []
