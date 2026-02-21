@@ -1,0 +1,243 @@
+import { NextResponse } from 'next/server'
+import { prisma } from '@/lib/db'
+import { findSubcontractorsForOpportunity } from '@/lib/google-places'
+import { searchSamEntities, samEntityToSubcontractor } from '@/lib/samgov'
+import { isProductSolicitation, extractStateCode, extractPlaceOfPerformance } from '@/lib/opportunity-classification'
+
+/**
+ * Normalize phone to digits only for comparison.
+ */
+function normalizePhone(phone: string | null | undefined): string | null {
+  if (!phone) return null
+  const digits = phone.replace(/\D/g, '')
+  // Use last 10 digits (strip country code)
+  return digits.length >= 10 ? digits.slice(-10) : digits || null
+}
+
+/**
+ * Normalize address for comparison: lowercase, strip suite/unit numbers.
+ */
+function normalizeAddress(address: string | null | undefined): string | null {
+  if (!address) return null
+  return address
+    .toLowerCase()
+    .replace(/\b(suite|ste|unit|apt|#)\s*[\w-]+/gi, '')
+    .replace(/[,.\s]+/g, ' ')
+    .trim() || null
+}
+
+// POST - Auto-discover subcontractors via Google Maps + SAM.gov
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: opportunityId } = await params
+
+    // Get opportunity details
+    const opportunity = await prisma.opportunity.findUnique({
+      where: { id: opportunityId },
+      include: {
+        subcontractors: {
+          select: {
+            name: true,
+            placeId: true,
+            phone: true,
+            address: true,
+            ueiNumber: true,
+          },
+        },
+      },
+    }) as any
+
+    if (!opportunity) {
+      return NextResponse.json(
+        { error: 'Opportunity not found' },
+        { status: 404 }
+      )
+    }
+
+    // Check if Google Places API is configured
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY
+    const isApiConfigured = apiKey && !apiKey.includes('your-') && !apiKey.includes('your_')
+    console.log(`[Discover] Google Places API key present: ${!!apiKey}, configured: ${!!isApiConfigured}, length: ${apiKey?.length || 0}`)
+
+    // Classify opportunity: product vs. service
+    const classification = isProductSolicitation({
+      naicsCode: opportunity.naicsCode,
+      title: opportunity.title,
+      rawData: opportunity.rawData,
+    })
+    console.log(`[Discover] Classification: isProduct=${classification.isProduct}, confidence=${classification.confidence}, reason="${classification.reason}"`)
+
+    // Extract location info
+    const stateCode = extractStateCode(opportunity.rawData) || opportunity.state || null
+    const placeOfPerformance = extractPlaceOfPerformance(opportunity.rawData, opportunity.state)
+
+    // For services: use specific location. For products: use broad "United States"
+    const searchLocation = classification.isProduct ? 'United States' : placeOfPerformance
+    console.log(`[Discover] Search location: "${searchLocation}" (stateCode: ${stateCode})`)
+
+    // Build dedup sets from existing subcontractors
+    const existingNames = new Set(
+      opportunity.subcontractors.map((s: any) => s.name.toLowerCase().trim())
+    )
+    const existingPlaceIds = new Set(
+      opportunity.subcontractors.map((s: any) => s.placeId).filter(Boolean)
+    )
+    const existingUEIs = new Set(
+      opportunity.subcontractors.map((s: any) => s.ueiNumber).filter(Boolean)
+    )
+    const existingPhones = new Set(
+      opportunity.subcontractors.map((s: any) => normalizePhone(s.phone)).filter(Boolean)
+    )
+    const existingAddresses = new Set(
+      opportunity.subcontractors.map((s: any) => normalizeAddress(s.address)).filter(Boolean)
+    )
+
+    function isDuplicate(vendor: {
+      name: string
+      placeId?: string | null
+      phone?: string | null
+      address?: string | null
+      ueiNumber?: string | null
+    }): boolean {
+      if (existingNames.has(vendor.name.toLowerCase().trim())) return true
+      if (vendor.placeId && existingPlaceIds.has(vendor.placeId)) return true
+      if (vendor.ueiNumber && existingUEIs.has(vendor.ueiNumber)) return true
+      const normPhone = normalizePhone(vendor.phone)
+      if (normPhone && existingPhones.has(normPhone)) return true
+      const normAddr = normalizeAddress(vendor.address)
+      if (normAddr && existingAddresses.has(normAddr)) return true
+      return false
+    }
+
+    // Track newly added vendors for cross-source dedup
+    function markAdded(vendor: {
+      name: string
+      placeId?: string | null
+      phone?: string | null
+      address?: string | null
+      ueiNumber?: string | null
+    }) {
+      existingNames.add(vendor.name.toLowerCase().trim())
+      if (vendor.placeId) existingPlaceIds.add(vendor.placeId)
+      if (vendor.ueiNumber) existingUEIs.add(vendor.ueiNumber)
+      const normPhone = normalizePhone(vendor.phone)
+      if (normPhone) existingPhones.add(normPhone)
+      const normAddr = normalizeAddress(vendor.address)
+      if (normAddr) existingAddresses.add(normAddr)
+    }
+
+    const allCreateData: any[] = []
+
+    // === Source 1: Google Places ===
+    if (isApiConfigured) {
+      console.log(`[Discover] Searching Google Places: NAICS=${opportunity.naicsCode}, location="${searchLocation}", title="${opportunity.title?.substring(0, 50)}"`)
+      const vendors = await findSubcontractorsForOpportunity({
+        naicsCode: opportunity.naicsCode,
+        placeOfPerformance: classification.isProduct ? null : placeOfPerformance,
+        stateCode: classification.isProduct ? null : stateCode,
+        title: opportunity.title,
+      })
+
+      for (const vendor of vendors) {
+        if (isDuplicate(vendor)) continue
+        markAdded(vendor)
+        allCreateData.push({
+          opportunityId,
+          name: vendor.name,
+          phone: vendor.phone || null,
+          email: null,
+          website: vendor.website || null,
+          address: vendor.address || null,
+          service: vendor.service || null,
+          rating: vendor.rating || null,
+          totalRatings: vendor.totalRatings || null,
+          businessStatus: vendor.businessStatus || null,
+          placeId: vendor.placeId || null,
+          location: vendor.location || null,
+          source: 'google_places',
+        })
+      }
+      console.log(`[Discover] Google Places: ${allCreateData.length} new vendors after dedup`)
+    } else {
+      console.log('[Discover] Google Places API not configured, skipping')
+    }
+
+    // === Source 2: SAM.gov Entity Search ===
+    const samParams: { naicsCode?: string; stateCode?: string } = {}
+    if (opportunity.naicsCode) samParams.naicsCode = opportunity.naicsCode
+    if (!classification.isProduct && stateCode) samParams.stateCode = stateCode
+
+    let samWarning: string | undefined
+    if (samParams.naicsCode || samParams.stateCode) {
+      console.log(`[Discover] Searching SAM.gov entities: NAICS=${samParams.naicsCode}, state=${samParams.stateCode}`)
+      const samResult = await searchSamEntities(samParams)
+      console.log(`[Discover] SAM.gov returned ${samResult.totalRecords} total, ${samResult.entityData.length} in page`)
+
+      if (samResult.error) {
+        samWarning = samResult.error
+      }
+
+      let samAdded = 0
+      for (const entity of samResult.entityData) {
+        const subData = samEntityToSubcontractor(entity, opportunityId)
+
+        if (isDuplicate({
+          name: subData.name,
+          phone: subData.phone,
+          address: subData.address,
+          ueiNumber: subData.ueiNumber,
+        })) continue
+
+        markAdded(subData as any)
+        allCreateData.push(subData)
+        samAdded++
+      }
+      console.log(`[Discover] SAM.gov: ${samAdded} new vendors after dedup`)
+    } else {
+      console.log('[Discover] No NAICS/state for SAM.gov search, skipping')
+    }
+
+    if (allCreateData.length === 0) {
+      if (!isApiConfigured) {
+        return NextResponse.json(
+          {
+            error: 'Google Places API not configured',
+            message: 'Add a valid GOOGLE_PLACES_API_KEY to your .env.local file to discover real vendors.',
+            hint: 'Get an API key from https://console.cloud.google.com/apis/credentials',
+          },
+          { status: 503 }
+        )
+      }
+      return NextResponse.json({
+        message: 'No new vendors found for this opportunity.',
+        added: 0,
+        ...(samWarning && { samWarning }),
+      })
+    }
+
+    // Limit to 15 total new vendors
+    const result = await prisma.subcontractor.createMany({
+      data: allCreateData.slice(0, 15),
+      skipDuplicates: true,
+    })
+
+    const googleCount = allCreateData.filter(v => v.source === 'google_places').length
+    const samCount = allCreateData.filter(v => v.source === 'sam_gov').length
+
+    return NextResponse.json({
+      message: `Found ${result.count} vendors (${googleCount} Google Maps, ${samCount} SAM.gov)`,
+      added: result.count,
+      sources: { google: googleCount, sam: samCount },
+      ...(samWarning && { samWarning }),
+    })
+  } catch (error) {
+    console.error('Discover subcontractors error:', error)
+    return NextResponse.json(
+      { error: 'Failed to discover subcontractors', details: error instanceof Error ? error.message : 'Unknown error' },
+      { status: 500 }
+    )
+  }
+}
