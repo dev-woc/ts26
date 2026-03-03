@@ -2,107 +2,150 @@ import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
 
+const SAM_API_BASE = 'https://api.sam.gov/opportunities/v2/search'
+
 export async function POST(req: Request) {
   try {
-    // Check authentication
     const session = await auth()
 
     if (!session) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Only admins can trigger fetches
     if (session.user.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'Forbidden - Admin access required' },
-        { status: 403 }
-      )
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    // Parse request body
     const body = await req.json()
-    const { limit = 50, naics_code, posted_days_ago = 60 } = body
+    const { limit = 100, posted_days_ago = 90, naics_codes } = body
 
-    // Call Python serverless function
-    const pythonUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    const pythonResponse = await fetch(`${pythonUrl}/api/python/fetch_opportunities`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        limit,
-        posted_days_ago,
-        min_deadline_days: 14,
-        naics_code,
-      }),
+    const apiKey = process.env.SAM_GOV_API_KEY
+    if (!apiKey) {
+      return NextResponse.json({ error: 'SAM_GOV_API_KEY not configured' }, { status: 500 })
+    }
+
+    // Calculate date range
+    const postedFrom = new Date()
+    postedFrom.setDate(postedFrom.getDate() - posted_days_ago)
+    const postedFromStr = postedFrom.toLocaleDateString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric',
     })
 
-    if (!pythonResponse.ok) {
-      throw new Error('Failed to fetch opportunities from Python function')
+    const todayStr = new Date().toLocaleDateString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric',
+    })
+
+    // Build SAM.gov search URL
+    const url = new URL(SAM_API_BASE)
+    url.searchParams.set('api_key', apiKey)
+    url.searchParams.set('postedFrom', postedFromStr)
+    url.searchParams.set('postedTo', todayStr)
+    url.searchParams.set('limit', String(limit))
+    url.searchParams.set('offset', '0')
+    // Only active/presolicitation opportunities
+    url.searchParams.set('ptype', 'o,p,k')
+    // Sort by posted date descending
+    url.searchParams.set('sortBy', '-modifiedOn')
+
+    if (naics_codes) {
+      url.searchParams.set('ncode', naics_codes)
     }
 
-    const data = await pythonResponse.json()
+    console.log(`Fetching from SAM.gov: ${url.toString().replace(apiKey, '***')}`)
 
-    if (data.status !== 'success') {
-      throw new Error(data.error || 'Unknown error from Python function')
+    const response = await fetch(url.toString(), {
+      headers: { Accept: 'application/json' },
+    })
+
+    if (!response.ok) {
+      const text = await response.text()
+      console.error(`SAM.gov error ${response.status}: ${text}`)
+      return NextResponse.json(
+        { error: `SAM.gov returned ${response.status}`, details: text },
+        { status: 502 }
+      )
     }
 
-    // Save opportunities to database
-    const savedOpportunities = []
+    const data = await response.json()
+    const opportunities = data.opportunitiesData || []
+
+    console.log(`SAM.gov returned ${opportunities.length} opportunities (total: ${data.totalRecords})`)
+
+    // Filter: only keep opportunities with ≥14 days until closing
+    const minDeadlineDate = new Date()
+    minDeadlineDate.setDate(minDeadlineDate.getDate() + 14)
+
+    const filtered = opportunities.filter((opp: any) => {
+      if (!opp.responseDeadLine) return false
+      const deadline = new Date(opp.responseDeadLine)
+      return deadline >= minDeadlineDate
+    })
+
+    console.log(`${filtered.length} opportunities with ≥14 days until closing`)
+
+    // Upsert into database
+    const saved = []
     const errors = []
 
-    for (const opp of data.opportunities) {
+    for (const opp of filtered) {
       try {
-        // Parse dates
+        const solNum = opp.solicitationNumber || opp.noticeId
+        if (!solNum) continue
+
         let postedDate = null
-        let responseDeadline = null
-
         if (opp.postedDate) {
-          try {
-            postedDate = new Date(opp.postedDate)
-          } catch (e) {
-            console.warn(`Could not parse posted date: ${opp.postedDate}`)
-          }
+          try { postedDate = new Date(opp.postedDate) } catch {}
         }
 
+        let responseDeadline = null
         if (opp.responseDeadLine) {
-          try {
-            responseDeadline = new Date(opp.responseDeadLine)
-          } catch (e) {
-            console.warn(`Could not parse response deadline: ${opp.responseDeadLine}`)
-          }
+          try { responseDeadline = new Date(opp.responseDeadLine) } catch {}
         }
 
-        // Upsert opportunity (update if exists, create if not)
-        const saved = await prisma.opportunity.upsert({
-          where: {
-            solicitationNumber: opp.solicitationNumber || `unknown-${Date.now()}`,
-          },
+        // Extract description from various SAM.gov fields
+        const description = opp.description?.body || opp.description || opp.additionalInfoLink || ''
+
+        // Extract place of performance state
+        const popState = opp.placeOfPerformance?.state?.code
+          || opp.placeOfPerformance?.state?.name
+          || opp.officeAddress?.state
+          || null
+
+        // Extract NAICS codes - SAM.gov can return them in different formats
+        let naicsCode = null
+        if (opp.naicsCode) {
+          naicsCode = opp.naicsCode
+        } else if (opp.classificationCode) {
+          naicsCode = opp.classificationCode
+        }
+
+        const record = await prisma.opportunity.upsert({
+          where: { solicitationNumber: solNum },
           update: {
             title: opp.title || 'Untitled',
-            description: opp.description,
-            naicsCode: opp.naicsCode,
-            agency: opp.organizationName || opp.department,
-            department: opp.department,
-            state: opp.placeOfPerformance?.state?.name,
+            description: typeof description === 'string' ? description.substring(0, 10000) : JSON.stringify(description).substring(0, 10000),
+            naicsCode,
+            agency: opp.fullParentPathName || opp.organizationName || opp.department || null,
+            department: opp.department || opp.fullParentPathName?.split('.')[0] || null,
+            state: popState,
             postedDate,
             responseDeadline,
             lastFetched: new Date(),
-            status: responseDeadline && responseDeadline < new Date() ? 'EXPIRED' : 'ACTIVE',
+            status: 'ACTIVE',
             rawData: opp,
           },
           create: {
-            solicitationNumber: opp.solicitationNumber || `unknown-${Date.now()}`,
+            solicitationNumber: solNum,
             title: opp.title || 'Untitled',
-            description: opp.description,
-            naicsCode: opp.naicsCode,
-            agency: opp.organizationName || opp.department,
-            department: opp.department,
-            state: opp.placeOfPerformance?.state?.name,
+            description: typeof description === 'string' ? description.substring(0, 10000) : JSON.stringify(description).substring(0, 10000),
+            naicsCode,
+            agency: opp.fullParentPathName || opp.organizationName || opp.department || null,
+            department: opp.department || opp.fullParentPathName?.split('.')[0] || null,
+            state: popState,
             postedDate,
             responseDeadline,
             lastFetched: new Date(),
@@ -111,50 +154,45 @@ export async function POST(req: Request) {
           },
         })
 
-        savedOpportunities.push(saved)
+        saved.push(record)
       } catch (error) {
         errors.push({
           solicitation: opp.solicitationNumber,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : 'Unknown',
         })
       }
     }
 
-    // Log the fetch operation
+    // Log the operation
     await prisma.systemLog.create({
       data: {
         level: 'INFO',
-        message: `Fetched ${data.count} opportunities from SAM.gov`,
+        message: `Fetched ${opportunities.length} from SAM.gov, ${filtered.length} met deadline filter, ${saved.length} saved`,
         context: {
           user_id: session.user.id,
-          saved_count: savedOpportunities.length,
-          error_count: errors.length,
-          search_params: data.search_params,
+          total_from_sam: opportunities.length,
+          filtered: filtered.length,
+          saved: saved.length,
+          errors: errors.length,
         },
       },
     })
 
     return NextResponse.json({
       success: true,
-      message: `Successfully fetched and saved opportunities`,
       stats: {
-        total_fetched: data.total_fetched,
-        filtered_count: data.filtered_count,
-        saved_to_db: savedOpportunities.length,
+        total_from_sam: data.totalRecords || opportunities.length,
+        returned: opportunities.length,
+        met_deadline_filter: filtered.length,
+        saved_to_db: saved.length,
         errors: errors.length,
       },
-      opportunities: savedOpportunities,
       errors: errors.length > 0 ? errors : undefined,
     })
-
   } catch (error) {
-    console.error('Error fetching opportunities:', error)
-
+    console.error('Fetch error:', error)
     return NextResponse.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
+      { error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     )
   }
