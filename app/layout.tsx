@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { Providers } from './providers'
+import AppLayout from '@/components/layout/AppLayout'
 
 export const metadata: Metadata = {
   title: 'USHER - Government Bid Management System',
@@ -16,7 +17,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <Providers>
-          {children}
+          <AppLayout>
+            {children}
+          </AppLayout>
         </Providers>
       </body>
     </html>
