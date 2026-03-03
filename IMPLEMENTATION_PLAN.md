@@ -400,14 +400,15 @@ const opportunities = await prisma.opportunity.findMany({
 - Scope Overview panel — Products / Services / Documentation / Compliance with pill tags, filters, team notes
 - Loading states — Generate SOW buttons show spinner during OpenAI call (~15-20s)
 - MCP servers — SAM.gov and Prisma DB direct query tools
+- **Agentic framework scaffolding** — `.claude/commands/` (/prime, /plan-feature, /execute, /commit), `docs/` on-demand context, `tests/e2e/` with agent-browser E2E tests
 
 ### 🔄 In Progress / Next
-- Advanced filtering (Phase 6)
-- Saved filters per user
+- **Phase 6: Advanced filtering** — margin range, status, NAICS, deadline, set-aside, saved filters
 - Reports enhancement (pipeline, margins, win-rate)
-- Dashboard widgets
+- Phase 7: Dashboard widgets
 
 ### 📋 Backlog
+- Saved filters per user
 - Mobile responsive layout
 - User onboarding flow
 - Performance optimization (attachment fetch caching)
@@ -427,6 +428,8 @@ const opportunities = await prisma.opportunity.findMany({
 - **PDF**: @react-pdf/renderer (server-side, replaces Python/reportlab)
 - **AI**: OpenAI GPT-4o + gpt-4o-mini via `openai` SDK
 - **MCPs**: SAM.gov MCP + Prisma DB MCP for AI-assisted development
+- **E2E Testing**: `agent-browser` skill — scripts in `tests/e2e/`
+- **AI Layer**: `.claude/commands/` (prime, plan-feature, execute, commit), `docs/` on-demand context
 
 ---
 
@@ -443,12 +446,12 @@ const opportunities = await prisma.opportunity.findMany({
 
 ## Next Steps
 
-Ready to start implementation! Recommend beginning with:
-1. Navigation menu (quick win, improves all workflows)
-2. Backfill button (makes all SOWs consistent)
-3. Progress tracker (high visibility feature)
-
-Which feature would you like me to build first?
+1. Open a fresh session in `usher-nextjs/`
+2. Run `/prime` to orient the agent
+3. Run `/plan-feature advanced-filtering` to plan Phase 6
+4. Reset context, run `/execute docs/plans/advanced-filtering.md`
+5. Validate with `npm run test:e2e:filtering`
+6. Run `/commit` with `[PHASE-6]` tag
 
 ---
 

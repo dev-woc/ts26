@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "prisma-db": {
+      "command": "npx",
+      "args": ["tsx", "--tsconfig", "mcp-servers/tsconfig.json", "mcp-servers/prisma/index.ts"]
+    }
+  }
+}

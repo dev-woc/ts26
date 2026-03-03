@@ -197,3 +197,44 @@ npx prisma migrate dev    # Run migrations
 npx prisma generate       # Regenerate Prisma client
 npx prisma studio         # Open DB browser
 ```
+
+## Data Sourcing Rules (Non-Negotiable)
+
+**Never use mock data, hardcoded estimates, or invented numbers anywhere in the application.**
+
+All financial estimates, historical pricing, and comparable awards must come from real data sources:
+
+1. **Primary:** USASpending.gov API (`lib/usaspending.ts`) — search by NAICS code + agency for historical award amounts.
+2. **Fallback (no exact match):** Broaden USASpending search to NAICS-only comparables across all agencies. Tag the result: `Source: USASpending.gov — NAICS {code} comparables`.
+3. **No USASpending data:** Use industry benchmarks (BLS wage tables, GSA rate cards). Always tag source and date.
+4. **No data at all:** Display `"Insufficient data — enter manual estimate"`. Never invent a number.
+
+Every displayed estimate must include:
+- **Source** — USASpending award ID, BLS table reference, or GSA schedule name
+- **Date** — when the source data was published/awarded
+- **Confidence** — `High` (direct match) / `Medium` (NAICS comparable) / `Low` (industry benchmark)
+
+## Custom Slash Commands
+
+This project defines custom slash commands in `.claude/commands/`. These are NOT registered Skill tool skills — do NOT call the Skill tool for them. Instead, when you receive `/prime`, `/plan-feature`, `/execute`, or `/commit`, read the corresponding `.claude/commands/<name>.md` file and follow its instructions directly.
+
+| Command | File | Purpose |
+|---------|------|---------|
+| `/prime` | `.claude/commands/prime.md` | Orient session at startup |
+| `/plan-feature` | `.claude/commands/plan-feature.md` | Write structured plan to `docs/plans/` |
+| `/execute` | `.claude/commands/execute.md` | Implement a plan file |
+| `/commit` | `.claude/commands/commit.md` | Commit with standard message format |
+
+**Rule:** If a `/command` is not in the Skill tool's registered list, check `.claude/commands/<command>.md` and run it from there.
+
+## Development Workflow
+
+Follow this sequence for every new phase:
+
+```
+/prime          → Orient session (read CLAUDE.md, ARCHITECTURE.md, IMPLEMENTATION_PLAN.md, git log, tsc)
+/plan-feature   → Write structured plan to docs/plans/<phase>.md
+/execute        → Implement plan file only
+Validate        → Manual QA in browser
+/commit         → Standard message with [PHASE-X] tag
+```
