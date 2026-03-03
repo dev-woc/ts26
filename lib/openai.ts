@@ -223,6 +223,169 @@ Return ONLY valid JSON. No markdown fences, no extra text.`
   }
 }
 
+// ─── Opportunity Brief ────────────────────────────────────────────────────────
+
+export interface OpportunityBrief {
+  whatTheyAreBuying: string
+  endUser?: string
+  placeOfPerformance: {
+    location: string
+    siteType: 'on-site' | 'remote' | 'hybrid' | 'unknown'
+    travelRequired: boolean
+  }
+  whoQualifies: {
+    setAside?: string
+    licenses?: string[]
+    clearances?: string[]
+    certifications?: string[]
+  }
+  keyDeliverables: Array<{
+    item: string
+    frequency?: string
+  }>
+  periodOfPerformance: {
+    basePeriod: string
+    optionYears?: number
+  }
+  estimatedValue?: string
+  contractType?: string
+  headsUp: Array<{
+    type: 'bonding' | 'clearance' | 'setaside' | 'timeline' | 'onsite' | 'other'
+    message: string
+  }>
+  generatedAt: string
+}
+
+interface BriefGenerationInput {
+  title: string
+  agency: string
+  solicitationNumber: string
+  naicsCode?: string | null
+  setAside?: string | null
+  description?: string | null
+  rawData?: Record<string, unknown> | null
+  parsedAttachments?: {
+    structured?: {
+      scope?: string[]
+      deliverables?: string[]
+      compliance?: string[]
+      periodOfPerformance?: string[]
+      placeOfPerformance?: string
+    }
+  } | null
+}
+
+/**
+ * Generate an Opportunity Brief — plain-language summary answering what, where, who qualifies,
+ * deliverables, and any gotchas. Cached to opportunity.opportunityBrief.
+ */
+export async function generateOpportunityBrief(input: BriefGenerationInput): Promise<OpportunityBrief> {
+  const {
+    title,
+    agency,
+    solicitationNumber,
+    naicsCode,
+    setAside,
+    description,
+    rawData,
+    parsedAttachments,
+  } = input
+
+  const structured = parsedAttachments?.structured
+
+  const contextBlock = [
+    `Title: ${title}`,
+    `Agency: ${agency}`,
+    `Solicitation Number: ${solicitationNumber}`,
+    naicsCode ? `NAICS Code: ${naicsCode}` : null,
+    setAside ? `Set-Aside: ${setAside}` : null,
+    rawData?.placeOfPerformance ? `Place of Performance: ${JSON.stringify(rawData.placeOfPerformance)}` : null,
+    rawData?.contractType ? `Contract Type: ${rawData.contractType}` : null,
+    rawData?.awardAmount ? `Estimated Value: ${rawData.awardAmount}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n')
+
+  const parsedBlock = structured
+    ? '\n\nPARSED SOLICITATION CONTENT:\n' +
+      (structured.scope?.length ? `Scope:\n${structured.scope.slice(0, 6).join('\n')}\n` : '') +
+      (structured.deliverables?.length ? `Deliverables:\n${structured.deliverables.slice(0, 6).join('\n')}\n` : '') +
+      (structured.compliance?.length ? `Compliance:\n${structured.compliance.slice(0, 6).join('\n')}\n` : '') +
+      (structured.periodOfPerformance?.length ? `Period of Performance:\n${structured.periodOfPerformance.slice(0, 4).join('\n')}\n` : '') +
+      (structured.placeOfPerformance ? `Place of Performance Detail: ${structured.placeOfPerformance}\n` : '')
+    : description
+    ? `\n\nSOLICITATION DESCRIPTION:\n${description.slice(0, 4000)}`
+    : ''
+
+  const prompt = `You are briefing a small business contractor on a federal solicitation before they search for subcontractors. Write a plain-language brief that answers the key questions they need answered.
+
+OPPORTUNITY DATA:
+${contextBlock}${parsedBlock}
+
+Return a JSON object matching this exact structure:
+{
+  "whatTheyAreBuying": "2–4 plain-English sentences. What is the government buying? Who is the end user? What is the core work?",
+  "endUser": "Who benefits from or uses the delivered services/products (e.g. 'Army personnel at Fort Knox'). Omit if unclear.",
+  "placeOfPerformance": {
+    "location": "City, State (or 'Multiple locations' or 'TBD')",
+    "siteType": "on-site | remote | hybrid | unknown",
+    "travelRequired": true or false
+  },
+  "whoQualifies": {
+    "setAside": "Set-aside type if applicable (e.g. 'SDVOSB', '8(a)', 'HUBZone') or null",
+    "licenses": ["Any required trade or professional licenses. Empty array if none."],
+    "clearances": ["Any required security clearances, e.g. 'Secret', 'Top Secret'. Empty array if none."],
+    "certifications": ["Any required certifications, e.g. 'ISO 9001', 'CMMC Level 2'. Empty array if none."]
+  },
+  "keyDeliverables": [
+    { "item": "Plain-language deliverable description", "frequency": "Monthly / Per incident / Annually / One-time (or omit if not stated)" }
+  ],
+  "periodOfPerformance": {
+    "basePeriod": "Plain description, e.g. '12 months' or 'Base year: Oct 2026 – Sep 2027'",
+    "optionYears": 4 (number of option years, or omit if none)
+  },
+  "estimatedValue": "Dollar amount if stated, e.g. '$2.4M/year (stated)' or 'Not stated'",
+  "contractType": "FFP / T&M / CPFF / IDIQ / etc. or null if not stated",
+  "headsUp": [
+    {
+      "type": "bonding | clearance | setaside | timeline | onsite | other",
+      "message": "Plain-language warning, e.g. 'Performance bond required — may disqualify smaller subs'"
+    }
+  ],
+  "generatedAt": "${new Date().toISOString()}"
+}
+
+Heads Up rules — include an entry for each that applies:
+- type "bonding": if bonding or insurance >$100K is mentioned
+- type "clearance": if any security clearance (Secret, Top Secret, DD-254) is required
+- type "setaside": if a set-aside restricts who can participate (list the restriction)
+- type "timeline": if response deadline is within 30 days OR if base period is unusually short (<6 months)
+- type "onsite": if work requires mandatory on-site presence (not remote-eligible)
+- type "other": any other unusual requirement that would affect subcontractor eligibility
+
+Keep all language plain and direct. No FAR clause numbers in plain text unless critical to understand. No jargon without explanation.
+
+Return ONLY valid JSON. No markdown, no extra text.`
+
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4o',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.2,
+    max_tokens: 2000,
+    response_format: { type: 'json_object' },
+  })
+
+  const raw = response.choices[0]?.message?.content || '{}'
+
+  try {
+    const parsed = JSON.parse(raw) as OpportunityBrief
+    if (!parsed.whatTheyAreBuying) throw new Error('Missing required brief fields')
+    return parsed
+  } catch {
+    throw new Error(`Failed to parse brief response: ${raw.slice(0, 200)}`)
+  }
+}
+
 /**
  * Generate a concise AI synopsis for an opportunity description.
  */

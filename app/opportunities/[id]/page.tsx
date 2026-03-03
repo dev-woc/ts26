@@ -25,6 +25,7 @@ export default function OpportunityWorkspacePage() {
   const [emailContext, setEmailContext] = useState<{ sowSynopsis?: string }>({})
   const [emailTemplateType, setEmailTemplateType] = useState<'quote_request' | 'sow_delivery' | 'follow_up' | 'custom'>('quote_request')
   const [generatingSOW, setGeneratingSOW] = useState(false)
+  const [generatingBrief, setGeneratingBrief] = useState(false)
   const [discoveringSubcontractors, setDiscoveringSubcontractors] = useState(false)
   const [solicitationAttachments, setSolicitationAttachments] = useState<RichAttachment[]>([])
   const [emailSelectedAttachments, setEmailSelectedAttachments] = useState<Set<string>>(new Set())
@@ -89,6 +90,22 @@ export default function OpportunityWorkspacePage() {
       }
     } catch (err) {
       console.error('Failed to create bid:', err)
+    }
+  }
+
+  const handleGenerateBrief = async () => {
+    if (!opportunity?.id) return
+    try {
+      setGeneratingBrief(true)
+      const res = await fetch(`/api/opportunities/${opportunity.id}/brief`, { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        setOpportunity((prev: any) => ({ ...prev, opportunityBrief: data.brief }))
+      }
+    } catch (err) {
+      console.error('Failed to generate brief:', err)
+    } finally {
+      setGeneratingBrief(false)
     }
   }
 
@@ -327,6 +344,9 @@ export default function OpportunityWorkspacePage() {
           onSeeSubcontractors={() => setActivePanel('subcontractors')}
           onProceed={handleProceed}
           nextStep={workflowState.action}
+          brief={opportunity?.opportunityBrief ?? null}
+          isGeneratingBrief={generatingBrief}
+          onGenerateBrief={handleGenerateBrief}
         />
       ),
     },

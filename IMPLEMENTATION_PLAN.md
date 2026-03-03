@@ -401,11 +401,15 @@ const opportunities = await prisma.opportunity.findMany({
 - Loading states — Generate SOW buttons show spinner during OpenAI call (~15-20s)
 - MCP servers — SAM.gov and Prisma DB direct query tools
 - **Agentic framework scaffolding** — `.claude/commands/` (/prime, /plan-feature, /execute, /commit), `docs/` on-demand context, `tests/e2e/` with agent-browser E2E tests
+- **Phase 4.1: Opportunity Brief** — GPT-4o "Know Before You Search" card at top of Summary tab; cached in `opportunityBrief` JSON; Heads Up alerts for clearance/bonding/set-aside/timeline
 
 ### 🔄 In Progress / Next
-- **Phase 6: Advanced filtering** — margin range, status, NAICS, deadline, set-aside, saved filters
-- Reports enhancement (pipeline, margins, win-rate)
-- Phase 7: Dashboard widgets
+- **Phase 4.2: SOW Editor** — PDF-style WYSIWYG editable layout
+- **Phase 4.3: Attachment Management** — AI-suggested names + government form detection
+- **Phase 4.4: Vendor Search** — configurable radius, explicit search geography UI
+- **Phase 4.5: Scope Overview Redesign** — prose + deliverables table + compliance checklist
+- Phase 4.6: Reports enhancement (pipeline, margins, win-rate)
+- Phase 4.7: Dashboard widgets
 
 ### 📋 Backlog
 - Saved filters per user

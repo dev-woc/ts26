@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { format, differenceInDays } from 'date-fns'
 import type { RichAttachment } from '@/lib/types/attachment'
+import type { OpportunityBrief } from '@/lib/openai'
+import OpportunityBriefCard from './OpportunityBriefCard'
 
 interface OpportunitySummaryPanelProps {
   opportunity: {
@@ -56,6 +58,9 @@ interface OpportunitySummaryPanelProps {
   onSeeBid?: () => void
   onProceed?: () => void
   nextStep?: string
+  brief?: OpportunityBrief | null
+  isGeneratingBrief?: boolean
+  onGenerateBrief?: () => void
 }
 
 export default function OpportunitySummaryPanel({
@@ -73,6 +78,9 @@ export default function OpportunitySummaryPanel({
   onSeeBid,
   onProceed,
   nextStep,
+  brief = null,
+  isGeneratingBrief = false,
+  onGenerateBrief,
 }: OpportunitySummaryPanelProps) {
   const [attachments, setAttachments] = useState<RichAttachment[]>([])
   const [loadingAttachments, setLoadingAttachments] = useState(false)
@@ -211,6 +219,19 @@ export default function OpportunitySummaryPanel({
 
   return (
     <div className="h-full overflow-auto">
+      {/* OPPORTUNITY BRIEF */}
+      <div className="p-6 bg-white border-b border-stone-200">
+        <div className="max-w-4xl mx-auto">
+          <OpportunityBriefCard
+            brief={brief}
+            isGenerating={isGeneratingBrief}
+            onGenerate={onGenerateBrief ?? (() => {})}
+            opportunityTitle={opportunity.title}
+            agency={opportunity.agency}
+          />
+        </div>
+      </div>
+
       {/* FIRST FOLD */}
       <div className="p-6 bg-white border-b border-stone-200">
         <div className="max-w-4xl mx-auto">

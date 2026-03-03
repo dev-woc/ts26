@@ -115,6 +115,7 @@ model Opportunity {
   // Metadata
   rawData            Json? // Store full SAM.gov response
   parsedAttachments  Json? // Cached parsed text from solicitation attachments
+  opportunityBrief   Json? // Cached AI-generated opportunity brief (OpportunityBrief)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
