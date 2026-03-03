@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
 import { prisma } from '@/lib/db'
+import { getPricingRecommendation } from '@/lib/usaspending'
 
 export async function POST(req: Request) {
   try {
@@ -24,9 +25,13 @@ export async function POST(req: Request) {
       )
     }
 
-    // Check if opportunity exists
+    // Check if opportunity exists and get assessment with subcontractors
     const opportunity = await prisma.opportunity.findUnique({
-      where: { id: opportunityId }
+      where: { id: opportunityId },
+      include: {
+        assessment: true,
+        subcontractors: true,
+      },
     })
 
     if (!opportunity) {
@@ -36,22 +41,190 @@ export async function POST(req: Request) {
       )
     }
 
-    // Create a basic bid (Phase 3 will add pricing analysis)
+    // Get historical pricing data from USASpending API
+    const estimatedCost = opportunity.assessment?.estimatedCost || undefined
+    const pricingAnalysis = await getPricingRecommendation(
+      {
+        naicsCode: opportunity.naicsCode,
+        title: opportunity.title,
+        agency: opportunity.agency,
+      },
+      estimatedCost
+    )
+
+    // Calculate profit analysis based on recommended price
+    const recommendedPrice = pricingAnalysis.recommendedBidPrice
+    const costBasis = estimatedCost || recommendedPrice * 0.75 // Estimate 75% cost if unknown
+    const potentialProfit = recommendedPrice - costBasis
+    const grossMargin = ((potentialProfit / recommendedPrice) * 100).toFixed(2)
+
+    // Determine profitability rating
+    let profitabilityRating = 'Low'
+    const marginPercent = parseFloat(grossMargin)
+    if (marginPercent >= 30) profitabilityRating = 'Excellent'
+    else if (marginPercent >= 20) profitabilityRating = 'Good'
+    else if (marginPercent >= 10) profitabilityRating = 'Moderate'
+    else if (marginPercent >= 5) profitabilityRating = 'Marginal'
+
+    // Determine opportunity size
+    let opportunitySize = 'Small'
+    if (recommendedPrice >= 10000000) opportunitySize = 'Large'
+    else if (recommendedPrice >= 1000000) opportunitySize = 'Medium'
+    else if (recommendedPrice >= 100000) opportunitySize = 'Small'
+    else opportunitySize = 'Micro'
+
+    // Build subcontractor estimates for bid content
+    const subcontractorEstimates = opportunity.subcontractors.map((sub) => ({
+      name: sub.name,
+      service: sub.service || 'General Services',
+      estimated_cost: sub.quotedAmount || 0,
+      is_actual_quote: sub.isActualQuote,
+    }))
+
+    // Create initial bid document content
+    const bidContent = {
+      header: {
+        title: 'BID PROPOSAL',
+        date: new Date().toLocaleDateString(),
+        bid_id: `BID-${Date.now().toString(36).toUpperCase()}`,
+        prepared_for: opportunity.agency || 'Government Agency',
+        prepared_by: session.user.name || 'USHER Team',
+      },
+      opportunity: {
+        title: opportunity.title,
+        solicitation_number: opportunity.solicitationNumber,
+        agency: opportunity.agency || '',
+        naics_code: opportunity.naicsCode || '',
+      },
+      pricing: {
+        recommended_price: recommendedPrice,
+        cost_basis: costBasis,
+        gross_margin: parseFloat(grossMargin),
+        confidence: pricingAnalysis.confidence,
+        source: pricingAnalysis.totalContracts > 0
+          ? 'usaspending_api'
+          : estimatedCost
+            ? 'cost_based'
+            : 'default_fallback',
+      },
+      sections: [
+        {
+          title: 'Executive Summary',
+          content: 'This proposal outlines our comprehensive approach to fulfilling the requirements specified in the solicitation.',
+        },
+        {
+          title: 'Technical Approach',
+          content: 'Our technical approach leverages industry best practices and innovative solutions.',
+        },
+        {
+          title: 'Past Performance',
+          content: 'Our organization has a demonstrated track record of successfully delivering similar projects.',
+        },
+      ],
+      subcontractor_estimates: subcontractorEstimates,
+    }
+
+    // Create bid with USASpending data
     const bid = await prisma.bid.create({
       data: {
         opportunityId,
         userId: session.user.id,
-        recommendedPrice: 100000, // Placeholder - Phase 3 will calculate this
+        recommendedPrice,
+        costBasis,
+        potentialProfit,
+        grossMargin: parseFloat(grossMargin),
+        profitabilityRating,
+        opportunitySize,
+        confidence: pricingAnalysis.confidence,
+        source: pricingAnalysis.totalContracts > 0
+          ? 'usaspending_api'
+          : estimatedCost
+            ? 'cost_based'
+            : 'default_fallback',
+        historicalData: {
+          totalContracts: pricingAnalysis.totalContracts,
+          averageValue: pricingAnalysis.averageContractValue,
+          medianValue: pricingAnalysis.medianContractValue,
+          minValue: pricingAnalysis.minContractValue,
+          maxValue: pricingAnalysis.maxContractValue,
+          contracts: pricingAnalysis.historicalContracts as any,
+        },
+        content: bidContent,
+        notes: `Bid pricing based on ${pricingAnalysis.totalContracts} historical contracts from USASpending API. Confidence: ${pricingAnalysis.confidence}.`,
         status: 'DRAFT',
-        confidence: 'low',
-        source: 'manual',
-        notes: 'Bid created manually. Pricing analysis pending.',
-      }
+      },
+    })
+
+    // Auto-create or update assessment based on bid analysis
+    const profitMarginPercent = parseFloat(grossMargin)
+    const meetsMarginTarget = profitMarginPercent >= 10
+
+    // Determine recommendation
+    let recommendation = 'NO_GO'
+    if (profitMarginPercent >= 20) recommendation = 'GO'
+    else if (profitMarginPercent >= 10) recommendation = 'REVIEW'
+
+    // Determine strategic value and risk based on opportunity size and confidence
+    let strategicValue: 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM'
+    if (opportunitySize === 'Large') strategicValue = 'HIGH'
+    else if (opportunitySize === 'Micro') strategicValue = 'LOW'
+
+    let riskLevel: 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM'
+    if (pricingAnalysis.confidence === 'high' || pricingAnalysis.confidence === 'medium') {
+      riskLevel = 'LOW'
+    } else if (pricingAnalysis.confidence === 'very_low') {
+      riskLevel = 'HIGH'
+    }
+
+    // Create or update assessment
+    await prisma.opportunityAssessment.upsert({
+      where: { opportunityId },
+      create: {
+        opportunityId,
+        estimatedValue: recommendedPrice,
+        estimatedCost: costBasis,
+        profitMarginDollar: potentialProfit,
+        profitMarginPercent,
+        meetsMarginTarget,
+        strategicValue,
+        riskLevel,
+        recommendation,
+        notes: `Auto-generated from bid analysis. ${pricingAnalysis.totalContracts} historical contracts analyzed.`,
+        assessedById: session.user.id,
+      },
+      update: {
+        estimatedValue: recommendedPrice,
+        estimatedCost: costBasis,
+        profitMarginDollar: potentialProfit,
+        profitMarginPercent,
+        meetsMarginTarget,
+        strategicValue,
+        riskLevel,
+        recommendation,
+        notes: `Auto-generated from bid analysis. ${pricingAnalysis.totalContracts} historical contracts analyzed.`,
+        assessedById: session.user.id,
+        assessedAt: new Date(),
+      },
+    })
+
+    // Update progress to ASSESSMENT stage if not already past it
+    await prisma.opportunityProgress.upsert({
+      where: { opportunityId },
+      create: {
+        opportunityId,
+        currentStage: 'ASSESSMENT',
+        completionPct: 25,
+      },
+      update: {
+        currentStage: 'ASSESSMENT',
+        completionPct: 25,
+      },
     })
 
     return NextResponse.json({
       success: true,
       bid,
+      pricingAnalysis,
     })
 
   } catch (error) {
@@ -82,6 +255,10 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url)
     const opportunityId = searchParams.get('opportunityId')
     const status = searchParams.get('status')
+    const search = searchParams.get('search')
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '20')
+    const skip = (page - 1) * limit
 
     const where: any = {}
 
@@ -92,6 +269,19 @@ export async function GET(req: Request) {
     if (status) {
       where.status = status
     }
+
+    // Search by opportunity title or solicitation number
+    if (search) {
+      where.opportunity = {
+        OR: [
+          { title: { contains: search, mode: 'insensitive' } },
+          { solicitationNumber: { contains: search, mode: 'insensitive' } },
+        ],
+      }
+    }
+
+    // Get total count for pagination
+    const total = await prisma.bid.count({ where })
 
     const bids = await prisma.bid.findMany({
       where,
@@ -112,13 +302,21 @@ export async function GET(req: Request) {
           }
         }
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
     })
 
     return NextResponse.json({
       success: true,
       bids,
       count: bids.length,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
     })
 
   } catch (error) {

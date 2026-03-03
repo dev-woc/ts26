@@ -42,6 +42,17 @@ export async function GET(
             },
           },
         },
+        sows: {
+          orderBy: { createdAt: 'desc' },
+          include: {
+            generatedBy: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
       },
     })
 
