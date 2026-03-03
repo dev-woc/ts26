@@ -12,11 +12,11 @@ agent-browser screenshot tests/e2e/screenshots/login-page.png
 agent-browser snapshot -i
 
 # Fill login form
-agent-browser find label "Email" fill "$TEST_USER_EMAIL"
+agent-browser find label "Email address" fill "$TEST_USER_EMAIL"
 agent-browser find label "Password" fill "$TEST_USER_PASSWORD"
 
-# Submit
-agent-browser find role button click --name "Sign In"
+# Submit — use first matching submit button (avoid Google OAuth button)
+agent-browser find role button click --name "Sign in" --exact
 
 # Wait for redirect to dashboard or opportunities
 agent-browser wait --url "**/dashboard"

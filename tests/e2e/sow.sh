@@ -7,13 +7,8 @@ echo "=== E2E: SOW Workspace ==="
 agent-browser open http://localhost:3000/dashboard
 agent-browser wait --load networkidle
 
-# Go to opportunities list
-agent-browser find role link click --name "Opportunities"
-agent-browser wait --load networkidle
-agent-browser snapshot -i
-
-# Click the first opportunity in the list
-agent-browser find role link click --index 0
+# Navigate directly to an opportunity workspace (one known to have a SOW)
+agent-browser open http://localhost:3000/opportunities/cmllhq1h300018onwatu9gthc
 agent-browser wait --load networkidle
 agent-browser screenshot tests/e2e/screenshots/workspace-summary.png
 
@@ -26,8 +21,8 @@ else
   exit 1
 fi
 
-# Navigate to SOW panel
-agent-browser find role button click --name "SOW"
+# Navigate to SOW panel (exact match to avoid hitting SOWs nav or See SOW buttons)
+agent-browser find role button click --name "SOW" --exact
 agent-browser wait --load networkidle
 agent-browser screenshot tests/e2e/screenshots/workspace-sow-panel.png
 
@@ -39,8 +34,8 @@ else
   exit 1
 fi
 
-# Navigate to Subcontractors panel
-agent-browser find role button click --name "Subcontractors"
+# Navigate to Subcontractors panel (exact match to avoid See Subcontractors button)
+agent-browser find role button click --name "Subcontractors" --exact
 agent-browser wait --load networkidle
 agent-browser screenshot tests/e2e/screenshots/workspace-subs-panel.png
 

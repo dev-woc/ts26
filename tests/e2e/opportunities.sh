@@ -18,7 +18,7 @@ else
 fi
 
 # Navigate to opportunities list
-agent-browser find role link click --name "Opportunities"
+agent-browser open http://localhost:3000/opportunities
 agent-browser wait --load networkidle
 agent-browser screenshot tests/e2e/screenshots/opportunities-list.png
 
