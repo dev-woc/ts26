@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { format } from 'date-fns'
 import type { PlainLanguageSection } from '@/lib/openai'
 
@@ -48,7 +48,7 @@ interface SOWPanelProps {
       attachments?: { name: string; url: string }[]
       sourceEnhanced?: boolean
     } | null
-    metadata?: Record<string, any> | null
+    metadata?: Record<string, unknown> | null
     generatedAt: string | Date
     fileName?: string
     fileUrl?: string
@@ -65,7 +65,8 @@ interface SOWPanelProps {
     naicsCode?: string
     periodOfPerformance?: string
   }
-  onSave?: (content: any) => Promise<void>
+  onSave?: (content: unknown) => Promise<void>
+  onSaveAndRefresh?: (content: unknown) => Promise<void>
   onGenerate?: () => Promise<void>
   onStatusChange?: (status: string) => Promise<void>
   isGenerating?: boolean
@@ -139,12 +140,20 @@ function TransformingSkeleton() {
   )
 }
 
+// ─── Auto-resize textarea ─────────────────────────────────────────────────────
+
+function autoResize(el: HTMLTextAreaElement) {
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+
 // ─── Main SOWPanel ────────────────────────────────────────────────────────────
 
 export default function SOWPanel({
   sow,
   opportunity,
   onSave,
+  onSaveAndRefresh,
   onGenerate,
   onStatusChange,
   isGenerating,
@@ -184,8 +193,8 @@ export default function SOWPanel({
     return sections
   }
 
-  const convertStructuredSections = (rawSections: any[]): SOWSection[] => {
-    return rawSections.map((s: any) => {
+  const convertStructuredSections = (rawSections: SOWSection[]): SOWSection[] => {
+    return rawSections.map((s) => {
       if (s.content && typeof s.content === 'string') {
         return { title: s.title, content: s.content, summary: s.summary, bullets: s.bullets, details: s.details }
       }
@@ -213,15 +222,19 @@ export default function SOWPanel({
     sow?.content?.sections ? convertStructuredSections(sow.content.sections) : buildDefaultSections()
   )
 
-  // 'plain' = plain language view (default), 'edit' = inline section editor
+  // 'plain' = plain language view (default), 'edit' = document-style editable view
   const [viewMode, setViewMode] = useState<'plain' | 'edit'>('plain')
   const [isTransforming, setIsTransforming] = useState(false)
   const [transformError, setTransformError] = useState('')
   const [plainCache, setPlainCache] = useState<PlainLanguageCache | null>(
     (sow?.metadata?.plainLanguage as PlainLanguageCache) ?? null
   )
-  const [saving, setSaving] = useState(false)
-  const [editingSection, setEditingSection] = useState<number | null>(null)
+
+  // Auto-save state
+  const [isSaving, setIsSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<Date | null>(null)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const savedAtTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const hasAutoTriggered = useRef(false)
 
@@ -232,6 +245,7 @@ export default function SOWPanel({
     if (sow?.metadata?.plainLanguage) {
       setPlainCache(sow.metadata.plainLanguage as PlainLanguageCache)
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sow])
 
   // Auto-generate plain language on first load if SOW exists but no cache yet
@@ -242,6 +256,31 @@ export default function SOWPanel({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sow?.id])
+
+  const buildContent = useCallback((currentSections: SOWSection[]) => ({
+    header: {
+      title: `SOW - ${opportunity.title}`,
+      date: new Date().toISOString().split('T')[0],
+    },
+    sections: currentSections,
+  }), [opportunity.title])
+
+  // Debounced auto-save on blur
+  const handleBlurSave = useCallback((currentSections: SOWSection[]) => {
+    if (!onSave) return
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+    saveTimeoutRef.current = setTimeout(async () => {
+      setIsSaving(true)
+      try {
+        await onSave(buildContent(currentSections))
+        setSavedAt(new Date())
+        if (savedAtTimerRef.current) clearTimeout(savedAtTimerRef.current)
+        savedAtTimerRef.current = setTimeout(() => setSavedAt(null), 3000)
+      } finally {
+        setIsSaving(false)
+      }
+    }, 400)
+  }, [onSave, buildContent])
 
   const handleTransform = async () => {
     if (!sow) return
@@ -260,37 +299,38 @@ export default function SOWPanel({
     }
   }
 
-  const handleSectionChange = (index: number, field: 'title' | 'content', value: string) => {
+  const handleSectionTitleChange = (index: number, value: string) => {
     const updated = [...sections]
-    updated[index] = { ...updated[index], [field]: value }
+    updated[index] = { ...updated[index], title: value }
     setSections(updated)
   }
 
-  const handleSave = async () => {
-    if (!onSave) return
-    setSaving(true)
-    try {
-      await onSave({
-        header: {
-          title: `SOW - ${opportunity.title}`,
-          date: new Date().toISOString().split('T')[0],
-        },
-        sections,
-      })
-    } finally {
-      setSaving(false)
-    }
+  const handleSectionContentChange = (index: number, value: string) => {
+    const updated = [...sections]
+    updated[index] = { ...updated[index], content: value }
+    setSections(updated)
   }
 
   const handleAddSection = () => {
-    const newIndex = sections.length
-    setSections([...sections, { title: `${newIndex + 1}. New Section`, content: '' }])
-    setEditingSection(newIndex)
+    const newSections = [...sections, { title: `${sections.length + 1}. New Section`, content: '' }]
+    setSections(newSections)
   }
 
   const handleRemoveSection = (index: number) => {
-    setSections(sections.filter((_, i) => i !== index))
-    setEditingSection(null)
+    const newSections = sections.filter((_, i) => i !== index)
+    setSections(newSections)
+    handleBlurSave(newSections)
+  }
+
+  // Save + refresh (used for "Save & re-generate plain language")
+  const handleSaveAndRegenerate = async () => {
+    const content = buildContent(sections)
+    if (onSaveAndRefresh) {
+      await onSaveAndRefresh(content)
+    } else if (onSave) {
+      await onSave(content)
+    }
+    await handleTransform()
   }
 
   // ── No SOW yet ──────────────────────────────────────────────────────────
@@ -461,136 +501,143 @@ export default function SOWPanel({
             </>
           )}
 
-          {/* ── EDIT SECTIONS VIEW ── */}
+          {/* ── EDIT SECTIONS VIEW — Document-style layout ── */}
           {viewMode === 'edit' && (
-            <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-              {/* Document header */}
-              <div className="p-6 border-b border-stone-100 text-center">
-                <h2 className="text-xl font-semibold text-stone-900">
-                  {sow.content?.header?.title || `Statement of Work`}
-                </h2>
-                <p className="text-sm text-stone-500 mt-2">
-                  {sow.content?.opportunity?.solicitationNumber || opportunity.solicitationNumber}
-                </p>
-                <p className="text-sm text-stone-400">
-                  {sow.content?.opportunity?.agency || opportunity.agency}
-                </p>
-                {(sow.content?.opportunity?.naicsCode || opportunity.naicsCode) && (
-                  <p className="text-xs text-stone-400 mt-1">
-                    NAICS: {sow.content?.opportunity?.naicsCode || opportunity.naicsCode}
-                  </p>
-                )}
-                {sow.content?.sourceEnhanced && (
-                  <p className="text-xs text-stone-500 mt-2 flex items-center justify-center gap-1">
-                    <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            <div className="bg-stone-50 rounded-lg">
+              {/* Auto-save indicator */}
+              <div className="flex items-center justify-end h-6 mb-2 px-1">
+                {isSaving && (
+                  <span className="flex items-center gap-1.5 text-xs text-stone-400">
+                    <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    Generated from parsed solicitation documents
-                  </p>
+                    Saving…
+                  </span>
+                )}
+                {!isSaving && savedAt && (
+                  <span className="text-xs text-stone-400">
+                    Saved ✓ {format(savedAt, 'h:mm a')}
+                  </span>
                 )}
               </div>
 
-              {/* Sections */}
-              <div className="divide-y divide-stone-100">
-                {sections.map((section, idx) => (
-                  <div key={idx} className="p-6">
-                    {editingSection === idx ? (
-                      <div className="space-y-3">
+              {/* Document page card */}
+              <div className="bg-white shadow-md rounded-lg overflow-hidden">
+                {/* Document header */}
+                <div className="px-10 pt-10 pb-6 border-b border-stone-200 text-center">
+                  <p className="text-xs font-semibold tracking-widest uppercase text-stone-400 mb-2">
+                    Statement of Work
+                  </p>
+                  <h2 className="text-lg font-semibold text-stone-900 mb-1">
+                    {sow.content?.opportunity?.title || opportunity.title}
+                  </h2>
+                  <p className="text-sm text-stone-500">
+                    {sow.content?.opportunity?.solicitationNumber || opportunity.solicitationNumber}
+                  </p>
+                  <p className="text-sm text-stone-400">
+                    {sow.content?.opportunity?.agency || opportunity.agency}
+                  </p>
+                  {(sow.content?.opportunity?.naicsCode || opportunity.naicsCode) && (
+                    <p className="text-xs text-stone-400 mt-1">
+                      NAICS: {sow.content?.opportunity?.naicsCode || opportunity.naicsCode}
+                    </p>
+                  )}
+                </div>
+
+                {/* Sections — always editable */}
+                <div className="divide-y divide-stone-100">
+                  {sections.map((section, idx) => (
+                    <div key={idx} className="px-10 py-6">
+                      {/* Section header: number badge + title input */}
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="w-6 h-6 bg-stone-900 text-white text-xs font-bold rounded flex items-center justify-center flex-shrink-0">
+                          {idx + 1}
+                        </div>
                         <input
                           type="text"
-                          value={section.title}
-                          onChange={(e) => handleSectionChange(idx, 'title', e.target.value)}
-                          className="w-full text-sm font-medium text-stone-800 bg-stone-50 border border-stone-200 rounded px-3 py-2 focus:ring-2 focus:ring-stone-300 focus:border-stone-300"
+                          value={section.title.replace(/^\d+\.\s*/, '')}
+                          onChange={(e) => handleSectionTitleChange(idx, `${idx + 1}. ${e.target.value}`)}
+                          onBlur={() => handleBlurSave(sections)}
+                          placeholder="Section title"
+                          className="flex-1 text-sm font-semibold text-stone-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-stone-200 rounded px-1 -mx-1"
                         />
-                        <textarea
-                          value={section.content}
-                          onChange={(e) => handleSectionChange(idx, 'content', e.target.value)}
-                          rows={6}
-                          className="w-full text-sm text-stone-700 bg-stone-50 border border-stone-200 rounded px-3 py-2 focus:ring-2 focus:ring-stone-300 focus:border-stone-300 resize-none"
-                          placeholder="Section content..."
-                        />
-                        <div className="flex items-center justify-between">
-                          <button
-                            onClick={() => handleRemoveSection(idx)}
-                            className="text-xs text-stone-400 hover:text-stone-700"
-                          >
-                            Remove section
-                          </button>
-                          <button
-                            onClick={() => setEditingSection(null)}
-                            className="text-xs text-stone-500 hover:text-stone-700"
-                          >
-                            Done editing
-                          </button>
-                        </div>
+                        <button
+                          onClick={() => handleRemoveSection(idx)}
+                          className="text-stone-300 hover:text-stone-500 transition-colors flex-shrink-0"
+                          title="Remove section"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
                       </div>
-                    ) : (
-                      <div
-                        onClick={() => setEditingSection(idx)}
-                        className="cursor-pointer hover:bg-stone-50 -m-3 p-3 rounded transition-colors"
-                      >
-                        <h3 className="text-sm font-medium text-stone-800 mb-2">{section.title}</h3>
-                        {section.summary && (
-                          <p className="text-xs text-stone-500 mb-2 italic">{section.summary}</p>
-                        )}
-                        {section.bullets && section.bullets.length > 0 ? (
-                          <ul className="space-y-1 mb-2">
-                            {section.bullets.map((bullet, bi) => (
-                              <li key={bi} className="text-sm text-stone-600 flex items-start gap-2">
-                                <span className="text-stone-400 mt-0.5 flex-shrink-0">-</span>
-                                <span>{bullet}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        {section.details ? (
-                          <p className="text-sm text-stone-600 whitespace-pre-wrap leading-relaxed">
-                            {section.details}
-                          </p>
-                        ) : !section.bullets?.length ? (
-                          <p className="text-sm text-stone-600 whitespace-pre-wrap leading-relaxed">
-                            {section.content || 'Click to edit...'}
-                          </p>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
 
-              {/* Add section */}
-              <div className="p-4 bg-stone-50 border-t border-stone-100">
-                <button
-                  onClick={handleAddSection}
-                  className="w-full py-2 text-xs text-stone-500 hover:text-stone-700 flex items-center justify-center gap-1"
-                >
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                  </svg>
-                  Add section
-                </button>
+                      {/* Thin divider */}
+                      <div className="border-b border-stone-100 mb-4" />
+
+                      {/* Summary (read-only italic context) */}
+                      {section.summary && (
+                        <p className="text-xs text-stone-400 italic mb-3 leading-relaxed">
+                          {section.summary}
+                        </p>
+                      )}
+
+                      {/* Bullets (read-only, shown above body textarea) */}
+                      {section.bullets && section.bullets.length > 0 && (
+                        <ul className="mb-3 space-y-1">
+                          {section.bullets.map((bullet, bi) => (
+                            <li key={bi} className="flex items-start gap-2 text-xs text-stone-500">
+                              <span className="mt-1 h-1 w-1 rounded-full bg-stone-300 flex-shrink-0" />
+                              <span>{bullet}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+
+                      {/* Body textarea — always editable */}
+                      <textarea
+                        ref={(el) => { if (el) autoResize(el) }}
+                        value={section.details || section.content}
+                        onChange={(e) => {
+                          handleSectionContentChange(idx, e.target.value)
+                          autoResize(e.target)
+                        }}
+                        onBlur={() => handleBlurSave(sections)}
+                        onInput={(e) => autoResize(e.currentTarget)}
+                        placeholder="Section body text…"
+                        rows={3}
+                        className="w-full text-sm text-stone-700 leading-relaxed bg-transparent border-none outline-none resize-none focus:ring-1 focus:ring-stone-200 rounded px-1 -mx-1"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add section */}
+                <div className="px-10 py-4 bg-stone-50 border-t border-stone-100">
+                  <button
+                    onClick={handleAddSection}
+                    className="w-full py-2 text-xs text-stone-400 hover:text-stone-600 flex items-center justify-center gap-1 transition-colors"
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Add section
+                  </button>
+                </div>
               </div>
             </div>
           )}
 
           {/* ── Actions ── */}
           <div className="flex gap-3 pt-1">
-            {onSave && viewMode === 'edit' && (
+            {viewMode === 'edit' && plainCache && (
               <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex-1 px-4 py-3 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 disabled:opacity-50 transition-colors"
-              >
-                {saving ? 'Saving...' : 'Save changes'}
-              </button>
-            )}
-            {viewMode === 'edit' && plainCache && onSave && (
-              <button
-                onClick={async () => { await handleSave(); await handleTransform() }}
-                disabled={saving || isTransforming}
+                onClick={handleSaveAndRegenerate}
+                disabled={isSaving || isTransforming}
                 className="flex-1 px-4 py-3 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 disabled:opacity-50 transition-colors"
               >
-                {saving || isTransforming ? 'Updating…' : 'Save & re-generate plain language'}
+                {isSaving || isTransforming ? 'Updating…' : 'Save & re-generate plain language'}
               </button>
             )}
             {sow.status === 'DRAFT' && onStatusChange && (
@@ -609,16 +656,17 @@ export default function SOWPanel({
                 Mark as sent
               </button>
             )}
-            {sow.fileUrl && (
-              <a
-                href={sow.fileUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-4 py-3 text-sm font-medium text-stone-600 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors"
-              >
-                Download PDF
-              </a>
-            )}
+            <a
+              href={`/api/sows/${sow.id}/download`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-3 text-sm font-medium text-stone-600 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+              Download PDF
+            </a>
           </div>
 
         </div>

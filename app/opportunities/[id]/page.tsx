@@ -171,6 +171,7 @@ export default function OpportunityWorkspacePage() {
     await fetchData()
   }
 
+  // Silent save — used for auto-save on blur (no re-render of parent)
   const handleSaveSOW = async (content: any) => {
     const sow = opportunity?.sows?.[0]
     if (!sow) return
@@ -180,6 +181,11 @@ export default function OpportunityWorkspacePage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     })
+  }
+
+  // Save + full refresh — used after "Save & re-generate plain language"
+  const handleSaveSOWAndRefresh = async (content: any) => {
+    await handleSaveSOW(content)
     await fetchData()
   }
 
@@ -380,6 +386,7 @@ export default function OpportunityWorkspacePage() {
           onGenerate={handleGenerateSOW}
           isGenerating={generatingSOW}
           onSave={handleSaveSOW}
+          onSaveAndRefresh={handleSaveSOWAndRefresh}
           onStatusChange={handleSOWStatusChange}
         />
       ),
