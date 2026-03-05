@@ -459,14 +459,15 @@ ${attachmentList}
 
 For each attachment, return a JSON object with:
 - "id": the attachment ID (exact match, do not change)
-- "suggestedName": A clear, descriptive filename in Title Case (e.g. "Statement of Work.pdf", "SF-1449 Solicitation Form.pdf", "Wage Determination WD-2024-0001.pdf"). Keep the original file extension. Return null if the original name is already clear.
-- "confidence": "HIGH" (confident in the suggested name), "MEDIUM" (reasonable guess), or "LOW" (uncertain)
+- "suggestedName": A clear, human-readable filename in Title Case that someone could understand at a glance (e.g. "Statement of Work.pdf", "SF-1449 Solicitation Form.pdf", "Wage Determination WD-2024-0001.pdf", "Technical Requirements Section L.pdf"). Keep the original file extension. Return null ONLY if the original name is already a full plain-English title with spaces (e.g. "Performance Work Statement.pdf"). ALWAYS suggest a better name for contract numbers, codes, or vague names like "Attachment_A.pdf", "document1.pdf", "W912BV24R0003_0001.pdf", "J0002.pdf".
+- "confidence": "HIGH" (confident based on document content), "MEDIUM" (reasonable guess from filename or partial content), or "LOW" (limited information)
 - "isForm": true if this is a standard government form (SF-1449, SF-33, SF-26, SF-30, DD-1155, DD-254, OF-347, wage determination, etc.), false otherwise
 - "formType": the form identifier if isForm is true (e.g. "SF-1449"), null otherwise
 
 Rules:
 - Do NOT change file extensions
-- If the filename is already descriptive (e.g. "Statement_of_Work_v2.pdf"), return suggestedName: null
+- Contract numbers, UUIDs, codes (e.g. "W912BV24R0003_0001.pdf", "J0002.pdf") are NOT descriptive — always suggest a better name
+- Vague names like "Attachment_A", "Exhibit_1", "Section_L_M" should get clearer names based on content
 - For forms, always include the form number in the suggestedName
 - Return a JSON object with key "results" containing an array of ${attachments.length} objects
 

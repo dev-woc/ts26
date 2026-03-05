@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { format, addMonths, startOfMonth } from 'date-fns'
+import { format, differenceInDays, addMonths, startOfMonth } from 'date-fns'
 import { complianceGlossary } from '@/lib/data/compliance-glossary'
 import type { GlossaryTerm } from '@/lib/data/compliance-glossary'
 import type { OpportunityBrief } from '@/lib/openai'
@@ -1214,12 +1214,211 @@ function FieldGuide({ initialQuery = '' }: { initialQuery?: string }) {
   )
 }
 
+// ── Overview Tab ──────────────────────────────────────────────────────────────
+
+function KeyFact({ label, value, wide }: { label: string; value: string | null | undefined; wide?: boolean }) {
+  if (!value) return null
+  return (
+    <div className={`${wide ? 'col-span-2' : 'col-span-1'} flex flex-col gap-0.5`}>
+      <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider">{label}</span>
+      <span className="text-sm text-stone-800 leading-snug">{value}</span>
+    </div>
+  )
+}
+
+function HeadsUpBanner({ items }: { items: OpportunityBrief['headsUp'] }) {
+  if (!items?.length) return null
+  const iconMap: Record<string, string> = {
+    bonding: '🔒', clearance: '🛡️', setaside: '⚖️', timeline: '⏰', onsite: '📍', other: '⚠️',
+  }
+  return (
+    <div className="space-y-2">
+      {items.map((item, i) => (
+        <div key={i} className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+          <span className="text-base flex-shrink-0 leading-none mt-0.5">{iconMap[item.type] ?? '⚠️'}</span>
+          <p className="text-xs text-amber-900 leading-relaxed">{item.message}</p>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function OverviewTab({
+  opportunity,
+  brief,
+  assessment,
+}: {
+  opportunity: ScopeOverviewPanelProps['opportunity']
+  brief?: OpportunityBrief | null
+  assessment?: { estimatedValue?: number; estimatedCost?: number; profitMarginPercent?: number } | null
+}) {
+  const structured: StructuredContent | undefined = (opportunity.parsedAttachments as any)?.structured
+
+  const deadline = opportunity.responseDeadline ? new Date(opportunity.responseDeadline) : null
+  const daysLeft = deadline ? differenceInDays(deadline, new Date()) : null
+
+  // Estimated value — prefer brief > assessment > opportunity field
+  const estValue = brief?.estimatedValue
+    || (assessment?.estimatedValue ? `$${assessment.estimatedValue.toLocaleString()} (assessment)` : null)
+    || (opportunity.estimatedContractValue ? `$${opportunity.estimatedContractValue.toLocaleString()}` : null)
+
+  const periodStr = brief?.periodOfPerformance
+    ? `${brief.periodOfPerformance.basePeriod}${brief.periodOfPerformance.optionYears ? ` + ${brief.periodOfPerformance.optionYears} option year${brief.periodOfPerformance.optionYears !== 1 ? 's' : ''}` : ''}`
+    : null
+
+  const location = brief?.placeOfPerformance?.location || opportunity.state || null
+
+  const deadlineLabel = deadline
+    ? `${format(deadline, 'MMM d, yyyy')}${daysLeft !== null ? ` (${daysLeft <= 0 ? 'expired' : `${daysLeft}d left`})` : ''}`
+    : null
+
+  const hasBrief = !!(brief?.whatTheyAreBuying || brief?.extendedOverview)
+  const hasScope = !!(structured?.scope?.length || structured?.deliverables?.length)
+
+  return (
+    <div className="space-y-5">
+      {/* Heads-up alerts */}
+      {brief?.headsUp && brief.headsUp.length > 0 && (
+        <HeadsUpBanner items={brief.headsUp} />
+      )}
+
+      {/* Key facts grid */}
+      <div className="bg-white border border-stone-200 rounded-xl p-4">
+        <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-3">Solicitation Facts</p>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+          <KeyFact label="Agency" value={opportunity.agency} wide />
+          <KeyFact label="Solicitation #" value={opportunity.solicitationNumber} />
+          <KeyFact label="NAICS" value={opportunity.naicsCode ? `${opportunity.naicsCode}` : null} />
+          <KeyFact label="Response Deadline" value={deadlineLabel} />
+          <KeyFact label="Contract Type" value={opportunity.contractType} />
+          <KeyFact label="Set-Aside" value={opportunity.setAside} />
+          <KeyFact label="Location" value={location} />
+          <KeyFact label="Period of Performance" value={periodStr} />
+          <KeyFact label="Estimated Value" value={estValue} />
+          {brief?.contractType && <KeyFact label="Contract Vehicle" value={brief.contractType} />}
+        </div>
+      </div>
+
+      {/* Narrative overview */}
+      {hasBrief ? (
+        <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider">What They&apos;re Buying</p>
+          {brief?.extendedOverview ? (
+            brief.extendedOverview.split(/\n+/).filter(Boolean).map((para, i) => (
+              <p key={i} className="text-sm text-stone-700 leading-relaxed">{para}</p>
+            ))
+          ) : (
+            <p className="text-sm text-stone-700 leading-relaxed">{brief?.whatTheyAreBuying}</p>
+          )}
+          {brief?.endUser && (
+            <p className="text-xs text-stone-500 italic border-t border-stone-100 pt-2">End user: {brief.endUser}</p>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white border border-stone-100 rounded-xl p-4">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-2">Description</p>
+          {opportunity.description ? (
+            <p className="text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{opportunity.description.slice(0, 2000)}</p>
+          ) : (
+            <p className="text-xs text-stone-400 italic">Generate the Opportunity Brief (Summary tab) for a plain-language overview.</p>
+          )}
+        </div>
+      )}
+
+      {/* Qualifications — only show if brief has data */}
+      {brief?.whoQualifies && (brief.whoQualifies.clearances?.length || brief.whoQualifies.certifications?.length || brief.whoQualifies.licenses?.length || brief.whoQualifies.setAside) && (
+        <div className="bg-white border border-stone-200 rounded-xl p-4">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-3">Who Can Compete</p>
+          <div className="space-y-2">
+            {brief.whoQualifies.setAside && (
+              <div className="flex items-start gap-2">
+                <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider w-20 flex-shrink-0 pt-0.5">Set-Aside</span>
+                <span className="text-sm text-stone-700">{brief.whoQualifies.setAside}</span>
+              </div>
+            )}
+            {brief.whoQualifies.clearances && brief.whoQualifies.clearances.length > 0 && (
+              <div className="flex items-start gap-2">
+                <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider w-20 flex-shrink-0 pt-0.5">Clearance</span>
+                <span className="text-sm text-stone-700">{brief.whoQualifies.clearances.join(', ')}</span>
+              </div>
+            )}
+            {brief.whoQualifies.licenses && brief.whoQualifies.licenses.length > 0 && (
+              <div className="flex items-start gap-2">
+                <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider w-20 flex-shrink-0 pt-0.5">Licenses</span>
+                <span className="text-sm text-stone-700">{brief.whoQualifies.licenses.join(', ')}</span>
+              </div>
+            )}
+            {brief.whoQualifies.certifications && brief.whoQualifies.certifications.length > 0 && (
+              <div className="flex items-start gap-2">
+                <span className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider w-20 flex-shrink-0 pt-0.5">Certs</span>
+                <span className="text-sm text-stone-700">{brief.whoQualifies.certifications.join(', ')}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Key deliverables */}
+      {brief?.keyDeliverables && brief.keyDeliverables.length > 0 && (
+        <div className="bg-white border border-stone-200 rounded-xl p-4">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-3">Key Deliverables</p>
+          <div className="space-y-2">
+            {brief.keyDeliverables.map((d, i) => (
+              <div key={i} className="flex items-start gap-2.5">
+                <span className="w-5 h-5 rounded-full bg-stone-100 text-stone-500 text-[10px] font-semibold flex items-center justify-center flex-shrink-0 mt-0.5">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm text-stone-800">{d.item}</span>
+                  {d.frequency && <span className="text-xs text-stone-400 ml-2">— {d.frequency}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Scope bullets from parsed attachments */}
+      {hasScope && (
+        <div className="bg-white border border-stone-200 rounded-xl p-4">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-3">
+            Scope — from Solicitation Documents
+          </p>
+          <div className="space-y-1.5">
+            {(structured?.scope ?? []).slice(0, 10).map((item, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-stone-300 mt-1 flex-shrink-0">•</span>
+                <p className="text-sm text-stone-700 leading-snug">{item.length > 200 ? item.slice(0, 200) + '…' : item}</p>
+              </div>
+            ))}
+            {(structured?.deliverables ?? []).length > 0 && !(structured?.scope?.length) && (
+              (structured?.deliverables ?? []).slice(0, 8).map((item, i) => (
+                <div key={`del-${i}`} className="flex items-start gap-2">
+                  <span className="text-stone-300 mt-1 flex-shrink-0">•</span>
+                  <p className="text-sm text-stone-700 leading-snug">{item.length > 200 ? item.slice(0, 200) + '…' : item}</p>
+                </div>
+              ))
+            )}
+          </div>
+          <p className="text-[10px] text-stone-400 mt-3 pt-2 border-t border-stone-100">
+            Extracted from solicitation attachments — see Deliverables and Compliance tabs for full detail.
+          </p>
+        </div>
+      )}
+
+      {!hasBrief && !hasScope && (
+        <div className="bg-white border border-stone-100 rounded-xl px-6 py-10 text-center">
+          <p className="text-sm text-stone-400">Generate the Opportunity Brief and parse attachments to populate this overview.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 
-type FilterKey = 'compliance' | 'deliverables' | 'qualifications' | 'evaluation' | 'postAward' | 'lifecycle' | 'fieldGuide'
+type FilterKey = 'overview' | 'compliance' | 'deliverables' | 'qualifications' | 'evaluation' | 'postAward' | 'lifecycle' | 'fieldGuide'
 
 export default function ScopeOverviewPanel({ opportunity, assessment, brief }: ScopeOverviewPanelProps) {
-  const [activeFilter, setActiveFilter] = useState<FilterKey>('compliance')
+  const [activeFilter, setActiveFilter] = useState<FilterKey>('overview')
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set())
 
   const structured: StructuredContent | undefined = (opportunity.parsedAttachments as any)?.structured
@@ -1262,6 +1461,7 @@ export default function ScopeOverviewPanel({ opportunity, assessment, brief }: S
   const hasParsedData = !!(structured?.compliance?.length || structured?.deliverables?.length)
 
   const ALL_FILTERS: { key: FilterKey; label: string; count?: number }[] = [
+    { key: 'overview',       label: 'Overview' },
     { key: 'compliance',     label: '⚖️ Compliance',    count: compliance.length },
     { key: 'deliverables',   label: '📄 Deliverables',  count: deliverables.length },
     { key: 'qualifications', label: '🎓 Qualifications', count: qualifications.length },
@@ -1271,7 +1471,7 @@ export default function ScopeOverviewPanel({ opportunity, assessment, brief }: S
     { key: 'fieldGuide',     label: '📚 Reference' },
   ]
   const FILTERS = ALL_FILTERS.filter(f =>
-    f.key === 'compliance' || f.key === 'postAward' || f.key === 'fieldGuide' || f.key === 'lifecycle' || (f.count ?? 0) > 0
+    f.key === 'overview' || f.key === 'compliance' || f.key === 'postAward' || f.key === 'fieldGuide' || f.key === 'lifecycle' || (f.count ?? 0) > 0
   )
 
   return (
@@ -1349,6 +1549,11 @@ export default function ScopeOverviewPanel({ opportunity, assessment, brief }: S
             </button>
           ))}
         </div>
+
+        {/* Overview */}
+        {activeFilter === 'overview' && (
+          <OverviewTab opportunity={opportunity} brief={brief} assessment={assessment} />
+        )}
 
         {/* Compliance */}
         {activeFilter === 'compliance' && (

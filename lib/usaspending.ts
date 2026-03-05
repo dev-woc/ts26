@@ -31,7 +31,8 @@ export interface PricingAnalysis {
   maxContractValue: number
   totalContracts: number
   recommendedBidPrice: number
-  confidence: 'high' | 'medium' | 'low' | 'very_low'
+  confidence: 'high' | 'medium' | 'low' | 'very_low' | 'no_data'
+  dataSource: string
   historicalContracts: HistoricalContract[]
 }
 
@@ -120,39 +121,8 @@ export async function searchHistoricalContracts(
   }
 }
 
-/**
- * NAICS-based industry pricing estimates for fallback when no historical data
- */
-const NAICS_PRICING: Record<string, { min: number; max: number; avg: number }> = {
-  '541512': { min: 150000, max: 2500000, avg: 750000 },   // Computer Systems Design
-  '541519': { min: 200000, max: 3000000, avg: 950000 },   // Other Computer Services
-  '541330': { min: 75000, max: 500000, avg: 200000 },     // Engineering Services
-  '541715': { min: 250000, max: 5000000, avg: 1200000 },  // R&D Physical Sciences
-  '541611': { min: 100000, max: 1500000, avg: 450000 },   // Management Consulting
-  '561210': { min: 25000, max: 150000, avg: 65000 },      // Janitorial Services
-  '238220': { min: 500000, max: 8000000, avg: 2200000 },  // Plumbing/HVAC/Solar
-  '811219': { min: 50000, max: 800000, avg: 285000 },     // Equipment Repair
-  '611430': { min: 80000, max: 600000, avg: 220000 },     // Professional Development Training
-  '236220': { min: 1000000, max: 20000000, avg: 5500000 },// Commercial Construction
-  '517312': { min: 100000, max: 2000000, avg: 600000 },   // Wireless Telecom
-  '562910': { min: 75000, max: 1200000, avg: 350000 },    // Environmental Remediation
-  '621610': { min: 60000, max: 400000, avg: 175000 },     // Home Health Care
-}
-
-function getNaicsFallbackPrice(naicsCode?: string | null): number {
-  if (naicsCode && NAICS_PRICING[naicsCode]) {
-    const { min, max, avg } = NAICS_PRICING[naicsCode]
-    // Return a value between avg and max, with some variation
-    const range = max - min
-    const seed = naicsCode.split('').reduce((sum, ch) => sum + ch.charCodeAt(0), 0)
-    const variation = ((seed * 7) % 100) / 100 // deterministic 0-1 based on NAICS
-    return Math.round(min + range * (0.3 + variation * 0.4))
-  }
-  // Generic fallback with variation based on current time seed
-  const bases = [85000, 125000, 210000, 340000, 475000, 620000, 780000]
-  const idx = Math.floor(Math.random() * bases.length)
-  return bases[idx]
-}
+// No hardcoded fallback pricing — per data sourcing rules, invented numbers are not permitted.
+// When no historical data is found, callers must show "Insufficient data — enter manual estimate".
 
 /**
  * Analyze historical contracts and calculate recommended bid price
@@ -163,17 +133,15 @@ export function analyzeHistoricalPricing(
   naicsCode?: string | null
 ): PricingAnalysis {
   if (contracts.length === 0) {
-    const fallbackPrice = estimatedCost
-      ? estimatedCost * 1.15
-      : getNaicsFallbackPrice(naicsCode)
     return {
       averageContractValue: 0,
       medianContractValue: 0,
       minContractValue: 0,
       maxContractValue: 0,
       totalContracts: 0,
-      recommendedBidPrice: fallbackPrice,
-      confidence: 'very_low',
+      recommendedBidPrice: 0,
+      confidence: 'no_data',
+      dataSource: 'No historical contracts found on USASpending.gov for this NAICS code and agency',
       historicalContracts: [],
     }
   }
@@ -199,7 +167,7 @@ export function analyzeHistoricalPricing(
   }
 
   // Determine confidence level based on data availability
-  let confidence: 'high' | 'medium' | 'low' | 'very_low'
+  let confidence: 'high' | 'medium' | 'low' | 'very_low' | 'no_data'
   if (totalContracts >= 20) {
     confidence = 'high'
   } else if (totalContracts >= 10) {
@@ -210,6 +178,9 @@ export function analyzeHistoricalPricing(
     confidence = 'very_low'
   }
 
+  const naicsLabel = naicsCode ? ` (NAICS ${naicsCode})` : ''
+  const dataSource = `USASpending.gov — ${totalContracts} historical contract${totalContracts !== 1 ? 's' : ''}${naicsLabel}, median $${medianContractValue.toLocaleString()}`
+
   return {
     averageContractValue,
     medianContractValue,
@@ -218,6 +189,7 @@ export function analyzeHistoricalPricing(
     totalContracts,
     recommendedBidPrice,
     confidence,
+    dataSource,
     historicalContracts: validContracts.slice(0, 10), // Top 10 for reference
   }
 }

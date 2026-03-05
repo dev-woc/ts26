@@ -64,12 +64,14 @@ export async function POST(
         .map((o) => o.attachmentId)
     )
 
-    // Extract parsed text per attachment (keyed by attachment index or id from parsedAttachments)
+    // Extract parsed text per attachment — keyed by filename (parsedAttachments stores by name, not id)
     const parsedData = opportunity.parsedAttachments as any
     const parsedTexts: Record<string, string> = {}
-    if (parsedData?.files && Array.isArray(parsedData.files)) {
-      for (const file of parsedData.files) {
-        if (file.id && file.text) parsedTexts[file.id] = file.text
+    if (parsedData?.parsed && Array.isArray(parsedData.parsed)) {
+      for (const file of parsedData.parsed) {
+        if (file.name && (file.fullText || file.preview)) {
+          parsedTexts[file.name] = (file.fullText || file.preview) as string
+        }
       }
     }
 
@@ -84,11 +86,11 @@ export async function POST(
       return NextResponse.json({ analyzed: 0, skipped })
     }
 
-    // Call GPT-4o
+    // Call GPT-4o — pass up to 1200 chars of document text for better naming context
     const analysisInputs = toAnalyze.map((att) => ({
       id: att.id,
       originalName: att.name,
-      textContent: parsedTexts[att.id],
+      textContent: parsedTexts[att.name]?.slice(0, 1200),
     }))
 
     const results = await analyzeAttachments(analysisInputs)

@@ -644,7 +644,9 @@ function OpportunitySidebar({
                   ? <>Source: <span className="font-medium">Cost-based estimate</span> · Confidence: <span className="font-medium capitalize">{currentBid?.confidence ?? 'low'}</span></>
                   : currentBid
                     ? <>Source: <span className="font-medium">Default fallback</span> — insufficient historical data · Enter manual estimate for accuracy</>
-                    : <>Source: <span className="font-medium">Assessment only</span> — create a bid for USASpending data</>
+                    : assessment?.notes
+                      ? <>{assessment.notes}</>
+                      : <>Value from manual assessment · Enter cost to calculate margin</>
               }
             </p>
           </div>

@@ -40,30 +40,26 @@ export async function POST(
       agency: opportunity.agency,
     })
 
-    // Calculate values
+    // If no historical data found, don't create an assessment with invented numbers
+    if (pricingAnalysis.confidence === 'no_data' || pricingAnalysis.recommendedBidPrice === 0) {
+      return NextResponse.json(
+        {
+          error: 'no_historical_data',
+          message: `No historical contracts found on USASpending.gov for NAICS ${opportunity.naicsCode ?? 'unknown'}${opportunity.agency ? ` / ${opportunity.agency}` : ''}. Enter your own estimated value and cost to create an assessment.`,
+          dataSource: pricingAnalysis.dataSource,
+        },
+        { status: 422 }
+      )
+    }
+
+    // Historical median is the estimated contract value
     const recommendedPrice = pricingAnalysis.recommendedBidPrice
-    const costBasis = recommendedPrice * 0.75 // Estimate 75% cost ratio
-    const potentialProfit = recommendedPrice - costBasis
-    const profitMarginPercent = ((potentialProfit / recommendedPrice) * 100)
-    const meetsMarginTarget = profitMarginPercent >= 10
 
-    // Determine recommendation
-    let recommendation = 'NO_GO'
-    if (profitMarginPercent >= 20) recommendation = 'GO'
-    else if (profitMarginPercent >= 10) recommendation = 'REVIEW'
-
-    // Determine opportunity size and strategic value
-    let opportunitySize = 'Small'
+    // Determine opportunity size and strategic value based on historical data
     let strategicValue: 'HIGH' | 'MEDIUM' | 'LOW' = 'MEDIUM'
     if (recommendedPrice >= 10000000) {
-      opportunitySize = 'Large'
       strategicValue = 'HIGH'
-    } else if (recommendedPrice >= 1000000) {
-      opportunitySize = 'Medium'
-    } else if (recommendedPrice >= 100000) {
-      opportunitySize = 'Small'
-    } else {
-      opportunitySize = 'Micro'
+    } else if (recommendedPrice < 100000) {
       strategicValue = 'LOW'
     }
 
@@ -75,19 +71,21 @@ export async function POST(
       riskLevel = 'HIGH'
     }
 
-    // Create assessment
+    const sourceNote = `${pricingAnalysis.dataSource}. Value shown is median of historical awards — enter your own cost estimate to calculate margin.`
+
+    // Create assessment with value from historical data; cost left blank for user to fill
     const assessment = await prisma.opportunityAssessment.create({
       data: {
         opportunityId: id,
         estimatedValue: recommendedPrice,
-        estimatedCost: costBasis,
-        profitMarginDollar: potentialProfit,
-        profitMarginPercent,
-        meetsMarginTarget,
+        estimatedCost: 0,
+        profitMarginDollar: 0,
+        profitMarginPercent: 0,
+        meetsMarginTarget: false,
         strategicValue,
         riskLevel,
-        recommendation,
-        notes: `Auto-generated based on ${pricingAnalysis.totalContracts} historical contracts. Confidence: ${pricingAnalysis.confidence}.`,
+        recommendation: 'REVIEW',
+        notes: sourceNote,
         assessedById: session.user.id,
       },
       include: {
