@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useMemo } from 'react'
+import { format, addMonths, startOfMonth } from 'date-fns'
 import { complianceGlossary } from '@/lib/data/compliance-glossary'
 import type { GlossaryTerm } from '@/lib/data/compliance-glossary'
+import type { OpportunityBrief } from '@/lib/openai'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +44,7 @@ interface ScopeOverviewPanelProps {
     estimatedContractValue?: number
     state?: string
     setAside?: string
+    contractType?: string
     rawData?: any
     parsedAttachments?: { structured?: StructuredContent } | any
   }
@@ -50,6 +53,7 @@ interface ScopeOverviewPanelProps {
     estimatedCost?: number
     profitMarginPercent?: number
   } | null
+  brief?: OpportunityBrief | null
 }
 
 // ── Glossary matching ─────────────────────────────────────────────────────────
@@ -666,6 +670,445 @@ function PostAwardTracker() {
   )
 }
 
+// ── Contract Lifecycle ────────────────────────────────────────────────────────
+
+interface LifecyclePhase {
+  phase: string
+  timeframe: string
+  durationMonths: number   // approximate months for calendar rendering
+  color: string            // tailwind bg class
+  actions: string[]
+  overdeliver?: string[]
+}
+
+function parsePeriodMonths(brief: OpportunityBrief | null | undefined): number {
+  const s = brief?.periodOfPerformance?.basePeriod ?? ''
+  const optYears = brief?.periodOfPerformance?.optionYears ?? 0
+  // Try "X months"
+  const mMatch = s.match(/(\d+)\s*month/i)
+  if (mMatch) return parseInt(mMatch[1]) + optYears * 12
+  // Try "X year(s)"
+  const yMatch = s.match(/(\d+)\s*year/i)
+  if (yMatch) return parseInt(yMatch[1]) * 12 + optYears * 12
+  // Try date range "Mon YYYY – Mon YYYY"
+  const rangeMatch = s.match(/(\w+)\s+(\d{4})\s*[–\-]\s*(\w+)\s+(\d{4})/)
+  if (rangeMatch) {
+    const start = new Date(`${rangeMatch[1]} 1, ${rangeMatch[2]}`)
+    const end = new Date(`${rangeMatch[3]} 1, ${rangeMatch[4]}`)
+    if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+      const diff = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
+      return diff + optYears * 12
+    }
+  }
+  return 12 + optYears * 12 // default
+}
+
+function buildLifecycle(brief: OpportunityBrief | null | undefined, opportunity: { contractType?: string; setAside?: string; agency?: string }): LifecyclePhase[] {
+  const hasDeliverables = (brief?.keyDeliverables?.length ?? 0) > 0
+  const hasClearance = (brief?.whoQualifies?.clearances?.length ?? 0) > 0
+  const isOnsite = brief?.placeOfPerformance?.siteType === 'on-site' || brief?.placeOfPerformance?.siteType === 'hybrid'
+  const hasOptions = (brief?.periodOfPerformance?.optionYears ?? 0) > 0
+  const perfMonths = parsePeriodMonths(brief)
+  const optMonths = (brief?.periodOfPerformance?.optionYears ?? 0) * 12
+  const baseMonths = perfMonths - optMonths
+
+  return [
+    {
+      phase: 'Pre-Award',
+      timeframe: 'Now through proposal submission',
+      durationMonths: 1,
+      color: 'bg-stone-400',
+      actions: [
+        "Read every page of the solicitation — especially Section C (scope), Section F (delivery), Section H (special requirements), and Section L/M (how you'll be evaluated)",
+        'Identify all FAR and DFARS clauses in Section I — each one is a legal obligation you\'re agreeing to',
+        'Verify your SAM.gov registration is active and all certifications are current',
+        'Confirm your NAICS code and any size standard eligibility',
+        ...(hasClearance ? ['Begin facility clearance (FCL) process early — it can take 6–18 months'] : []),
+        'Get at minimum two subcontractor quotes — include their past performance info in your proposal',
+        'Price your bid using historical comparable data, not gut feel',
+      ],
+      overdeliver: [
+        'Submit your proposal 24–48 hours early — last-minute uploads fail more than you think',
+        'Include a one-page executive summary that mirrors the government\'s evaluation criteria',
+        'Volunteer relevant past performance proactively, even if not explicitly required',
+      ],
+    },
+    {
+      phase: 'Award & Kickoff',
+      timeframe: 'Days 1–30 after award',
+      durationMonths: 1,
+      color: 'bg-stone-600',
+      actions: [
+        'Review the awarded contract in full — compare it to your proposal to catch any modifications',
+        'Register in Wide Area Workflow (WAWF) before your first delivery — you cannot invoice without it',
+        'Schedule the Kickoff Meeting (KOM) with your Contracting Officer (CO) and COR within 14 days',
+        'Confirm your key personnel are in place and notify the CO immediately if there are any changes',
+        ...(isOnsite ? ['Arrange site access, badges, and security processing for all on-site personnel'] : []),
+        'Set up your reporting cadence — monthly status reports, financial reports, CDRL due dates',
+        'Establish your Quality Control Plan (QCP) and submit it if required',
+        ...(hasClearance ? ['Confirm all cleared personnel are listed on the DD-254 and verify current clearances'] : []),
+      ],
+      overdeliver: [
+        'Send a one-page "Contract Start Memo" to your COR outlining your team, communication plan, and first 30-day milestones',
+        'Set up a shared document folder with the government team before the KOM',
+        'Ask your COR how they prefer to receive status updates — some want email, some want formal reports only',
+      ],
+    },
+    {
+      phase: 'Performance',
+      timeframe: `Base period (${baseMonths} months)`,
+      durationMonths: Math.max(baseMonths - 1, 1),
+      color: 'bg-stone-700',
+      actions: [
+        'Submit all CDRLs and data items on or before their due dates — late deliverables trigger cure notices',
+        'File monthly status reports (MSRs) even if nothing changed — silence looks like a problem',
+        ...(hasDeliverables ? ['Submit Inspection & Test Plans (ITPs) at least 20 days before delivery'] : []),
+        'Document everything — government witnesses, inspection results, approvals — in writing',
+        'Track spending against the funded amount and notify your CO immediately if you\'re approaching the ceiling',
+        'Respond to any government RFIs or data calls within the requested timeframe',
+        'Keep subcontractor performance records — you\'ll need them for CPARS and future bids',
+      ],
+      overdeliver: [
+        'Send a brief monthly "good news" note to your COR highlighting wins, not just status',
+        'Proactively flag potential issues before they become problems — COs reward transparency',
+        'Propose process improvements or cost-saving ideas in writing — it helps your CPARS rating',
+        'Document lessons learned mid-contract, not just at the end',
+      ],
+    },
+    ...(hasOptions ? [{
+      phase: 'Option Year(s)',
+      timeframe: `${brief?.periodOfPerformance?.optionYears} option year${(brief?.periodOfPerformance?.optionYears ?? 0) !== 1 ? 's' : ''} — exercise not guaranteed`,
+      durationMonths: optMonths,
+      color: 'bg-stone-500',
+      actions: [
+        'Confirm with your CO whether the option will be exercised — do not assume',
+        'Review your pricing for the option period against current market rates',
+        'Update subcontractor agreements and get renewed quotes if needed',
+        'Verify SAM.gov registration remains active — options cannot be exercised if you\'ve lapsed',
+        'Request a performance discussion with your COR before option exercise to surface any concerns',
+      ],
+      overdeliver: [
+        'Prepare a one-page "Year in Review" summarizing accomplishments — share it with your CO at the right moment',
+        'Propose value-added improvements or efficiencies for the option period',
+      ],
+    }] : []),
+    {
+      phase: 'Closeout',
+      timeframe: 'Final 30–60 days',
+      durationMonths: 1,
+      color: 'bg-stone-800',
+      actions: [
+        'Submit all final deliverables and obtain written acceptance from the government',
+        'File your final invoice through WAWF promptly after final acceptance',
+        'Return all Government Furnished Property (GFP) and get receipts',
+        'Respond to your CPARS evaluation within the 14-day contractor comment window — this is your permanent record',
+        'Archive all contract documentation for at least 3 years (or longer per your contract terms)',
+        'Collect past performance documentation for future proposals',
+      ],
+      overdeliver: [
+        'Ask your COR for a written letter of commendation — it supplements CPARS',
+        'Send a concise transition memo if another contractor is taking over',
+        'Request a debrief even if the closeout was smooth — you learn something every time',
+      ],
+    },
+  ]
+}
+
+// ── Lifecycle List View ───────────────────────────────────────────────────────
+
+function LifecycleList({ phases }: { phases: LifecyclePhase[] }) {
+  const [openPhase, setOpenPhase] = useState<string | null>(null)
+  const [showOverdeliver, setShowOverdeliver] = useState<Record<string, boolean>>({})
+
+  return (
+    <div className="space-y-2">
+      {phases.map((phase, i) => {
+        const isOpen = openPhase === phase.phase
+        const showOD = showOverdeliver[phase.phase]
+        return (
+          <div key={phase.phase} className="border border-stone-200 rounded-lg overflow-hidden">
+            <button
+              onClick={() => setOpenPhase(isOpen ? null : phase.phase)}
+              className="w-full flex items-center gap-3 px-4 py-3 bg-white hover:bg-stone-50 transition-colors text-left"
+            >
+              <span className={`flex-shrink-0 w-2.5 h-2.5 rounded-full ${phase.color}`} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-stone-800">{phase.phase}</p>
+                <p className="text-xs text-stone-400">{phase.timeframe}</p>
+              </div>
+              <span className="text-[10px] text-stone-400 flex-shrink-0">{phase.actions.length} actions</span>
+              <svg className={`h-4 w-4 text-stone-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {isOpen && (
+              <div className="px-4 pb-4 bg-stone-50/50 space-y-3">
+                <div className="pt-3 space-y-1.5">
+                  {phase.actions.map((action, j) => (
+                    <div key={j} className="flex items-start gap-2">
+                      <svg className="h-3.5 w-3.5 text-stone-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      <p className="text-sm text-stone-700 leading-snug">{action}</p>
+                    </div>
+                  ))}
+                </div>
+                {(phase.overdeliver?.length ?? 0) > 0 && (
+                  <div>
+                    <button
+                      onClick={() => setShowOverdeliver(prev => ({ ...prev, [phase.phase]: !showOD }))}
+                      className="flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-stone-700 transition-colors"
+                    >
+                      <svg className="h-3.5 w-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      {showOD ? 'Hide' : 'Show'} ways to overdeliver
+                    </button>
+                    {showOD && (
+                      <div className="mt-2 bg-amber-50 border border-amber-100 rounded-lg p-3 space-y-1.5">
+                        {phase.overdeliver!.map((tip, j) => (
+                          <div key={j} className="flex items-start gap-2">
+                            <span className="text-amber-500 flex-shrink-0 mt-0.5 text-xs">⚡</span>
+                            <p className="text-xs text-amber-900 leading-snug">{tip}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Lifecycle Calendar View ───────────────────────────────────────────────────
+
+function LifecycleCalendar({ phases, responseDeadline }: { phases: LifecyclePhase[]; responseDeadline?: string | Date | null }) {
+  // Default projected award: 45 days after response deadline, or 60 days from now
+  const defaultAward = useMemo(() => {
+    if (responseDeadline) {
+      const dl = new Date(responseDeadline)
+      const projected = new Date(dl)
+      projected.setDate(projected.getDate() + 45)
+      return projected.toISOString().split('T')[0]
+    }
+    const d = new Date()
+    d.setDate(d.getDate() + 60)
+    return d.toISOString().split('T')[0]
+  }, [responseDeadline])
+
+  const [awardDateStr, setAwardDateStr] = useState(defaultAward)
+  const [activePhase, setActivePhase] = useState<string | null>(null)
+
+  const awardDate = useMemo(() => {
+    const d = new Date(awardDateStr + 'T00:00:00')
+    return isNaN(d.getTime()) ? new Date() : d
+  }, [awardDateStr])
+
+  // Build phase segments: { phase, start (month index from awardDate), durationMonths }
+  const segments = useMemo(() => {
+    let cursor = 0
+    // Pre-award: ends at award (shown before month 0)
+    return phases.map(phase => {
+      const seg = { phase, startMonth: cursor, durationMonths: phase.durationMonths }
+      cursor += phase.durationMonths
+      return seg
+    })
+  }, [phases])
+
+  const totalMonths = segments.reduce((n, s) => Math.max(n, s.startMonth + s.durationMonths), 0)
+
+  // Month labels: from 1 month before award to end
+  const months = useMemo(() => {
+    return Array.from({ length: totalMonths + 1 }, (_, i) => addMonths(startOfMonth(awardDate), i))
+  }, [awardDate, totalMonths])
+
+  const COL_WIDTH = 72 // px per month column
+
+  return (
+    <div className="space-y-4">
+      {/* Date input */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <label className="text-xs text-stone-500 font-medium">Projected award date:</label>
+        <input
+          type="date"
+          value={awardDateStr}
+          onChange={e => setAwardDateStr(e.target.value)}
+          className="text-xs border border-stone-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-stone-400"
+        />
+        {responseDeadline && (
+          <span className="text-[10px] text-stone-400">
+            (Response deadline: {format(new Date(responseDeadline), 'MMM d, yyyy')} — award typically 30–90 days later)
+          </span>
+        )}
+      </div>
+
+      {/* Timeline */}
+      <div className="overflow-x-auto rounded-xl border border-stone-200 bg-white">
+        {/* Month header */}
+        <div className="flex border-b border-stone-100" style={{ minWidth: months.length * COL_WIDTH }}>
+          <div className="flex-shrink-0 w-28 px-3 py-2 text-[10px] font-semibold text-stone-400 uppercase tracking-wide border-r border-stone-100">
+            Phase
+          </div>
+          {months.map((m, i) => (
+            <div key={i} className="flex-shrink-0 text-center py-2 border-r border-stone-50 last:border-0" style={{ width: COL_WIDTH }}>
+              <p className="text-[10px] font-medium text-stone-500">{format(m, 'MMM')}</p>
+              <p className="text-[10px] text-stone-300">{format(m, 'yyyy')}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Phase rows */}
+        <div className="divide-y divide-stone-50">
+          {segments.map(({ phase, startMonth, durationMonths }) => {
+            const isActive = activePhase === phase.phase
+            return (
+              <button
+                key={phase.phase}
+                onClick={() => setActivePhase(isActive ? null : phase.phase)}
+                className={`flex w-full text-left transition-colors ${isActive ? 'bg-stone-50' : 'hover:bg-stone-50/50'}`}
+                style={{ minWidth: months.length * COL_WIDTH }}
+              >
+                {/* Label */}
+                <div className="flex-shrink-0 w-28 px-3 py-3 border-r border-stone-100 flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${phase.color}`} />
+                  <span className="text-[11px] font-medium text-stone-700 leading-tight">{phase.phase}</span>
+                </div>
+                {/* Bar */}
+                <div className="flex-1 py-3 px-1 relative" style={{ minWidth: (months.length) * COL_WIDTH - 112 }}>
+                  <div
+                    className={`absolute top-3 h-6 rounded flex items-center px-2 ${phase.color} opacity-90 transition-opacity hover:opacity-100`}
+                    style={{
+                      left: `${startMonth * COL_WIDTH}px`,
+                      width: `${durationMonths * COL_WIDTH - 4}px`,
+                    }}
+                  >
+                    <span className="text-[10px] font-medium text-white truncate">{phase.timeframe}</span>
+                  </div>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Today marker */}
+        {(() => {
+          const todayOffset = (new Date().getTime() - awardDate.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+          if (todayOffset < 0 || todayOffset > totalMonths) return null
+          return (
+            <div className="relative h-0" style={{ minWidth: months.length * COL_WIDTH }}>
+              <div
+                className="absolute top-0 bottom-0 w-px bg-red-400 opacity-60 pointer-events-none"
+                style={{ left: `${112 + todayOffset * COL_WIDTH}px`, height: `${segments.length * 48 + 40}px`, top: `-${segments.length * 48 + 40}px` }}
+              >
+                <span className="absolute -top-4 -left-4 text-[9px] text-red-500 font-semibold bg-white px-1">Today</span>
+              </div>
+            </div>
+          )
+        })()}
+      </div>
+
+      {/* Expanded phase detail */}
+      {activePhase && (() => {
+        const phase = phases.find(p => p.phase === activePhase)
+        if (!phase) return null
+        return (
+          <div className="border border-stone-200 rounded-xl overflow-hidden bg-white">
+            <div className={`px-4 py-2.5 flex items-center gap-2 ${phase.color}`}>
+              <p className="text-sm font-semibold text-white">{phase.phase}</p>
+              <span className="text-xs text-white/70">{phase.timeframe}</span>
+            </div>
+            <div className="p-4 space-y-3">
+              <div className="space-y-1.5">
+                {phase.actions.map((action, j) => (
+                  <div key={j} className="flex items-start gap-2">
+                    <svg className="h-3.5 w-3.5 text-stone-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    <p className="text-sm text-stone-700 leading-snug">{action}</p>
+                  </div>
+                ))}
+              </div>
+              {(phase.overdeliver?.length ?? 0) > 0 && (
+                <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 space-y-1.5">
+                  <p className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide mb-1">⚡ Ways to overdeliver</p>
+                  {phase.overdeliver!.map((tip, j) => (
+                    <p key={j} className="text-xs text-amber-900 leading-snug">{tip}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Legend */}
+      <div className="flex flex-wrap gap-3 px-1">
+        {phases.map(p => (
+          <div key={p.phase} className="flex items-center gap-1.5">
+            <span className={`w-2.5 h-2.5 rounded-sm ${p.color}`} />
+            <span className="text-[10px] text-stone-500">{p.phase}</span>
+          </div>
+        ))}
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-sm bg-red-400 opacity-60" />
+          <span className="text-[10px] text-stone-500">Today</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Lifecycle Tab (list + calendar toggle) ────────────────────────────────────
+
+function LifecycleTab({ brief, opportunity }: { brief: OpportunityBrief | null | undefined; opportunity: ScopeOverviewPanelProps['opportunity'] }) {
+  const [view, setView] = useState<'list' | 'calendar'>('list')
+  const phases = useMemo(() => buildLifecycle(brief, opportunity), [brief, opportunity.id])
+
+  return (
+    <div className="space-y-4">
+      {/* View toggle */}
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-stone-500">From bid submission through contract closeout.</p>
+        <div className="flex items-center bg-stone-100 rounded-lg p-0.5 gap-0.5">
+          <button
+            onClick={() => setView('list')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              view === 'list' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            List
+          </button>
+          <button
+            onClick={() => setView('calendar')}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              view === 'calendar' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-700'
+            }`}
+          >
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Timeline
+          </button>
+        </div>
+      </div>
+
+      {view === 'list'
+        ? <LifecycleList phases={phases} />
+        : <LifecycleCalendar phases={phases} responseDeadline={opportunity.responseDeadline} />
+      }
+    </div>
+  )
+}
+
 // ── Field Guide (full searchable glossary) ────────────────────────────────────
 
 function FieldGuide({ initialQuery = '' }: { initialQuery?: string }) {
@@ -773,9 +1216,9 @@ function FieldGuide({ initialQuery = '' }: { initialQuery?: string }) {
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
-type FilterKey = 'compliance' | 'deliverables' | 'qualifications' | 'evaluation' | 'postAward' | 'fieldGuide'
+type FilterKey = 'compliance' | 'deliverables' | 'qualifications' | 'evaluation' | 'postAward' | 'lifecycle' | 'fieldGuide'
 
-export default function ScopeOverviewPanel({ opportunity, assessment }: ScopeOverviewPanelProps) {
+export default function ScopeOverviewPanel({ opportunity, assessment, brief }: ScopeOverviewPanelProps) {
   const [activeFilter, setActiveFilter] = useState<FilterKey>('compliance')
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set())
 
@@ -823,11 +1266,12 @@ export default function ScopeOverviewPanel({ opportunity, assessment }: ScopeOve
     { key: 'deliverables',   label: '📄 Deliverables',  count: deliverables.length },
     { key: 'qualifications', label: '🎓 Qualifications', count: qualifications.length },
     { key: 'evaluation',     label: '📊 Evaluation',    count: evaluation.length },
+    { key: 'lifecycle',      label: '📅 Lifecycle' },
     { key: 'postAward',      label: '🏁 Post-Award' },
     { key: 'fieldGuide',     label: '📚 Reference' },
   ]
   const FILTERS = ALL_FILTERS.filter(f =>
-    f.key === 'compliance' || f.key === 'postAward' || f.key === 'fieldGuide' || (f.count ?? 0) > 0
+    f.key === 'compliance' || f.key === 'postAward' || f.key === 'fieldGuide' || f.key === 'lifecycle' || (f.count ?? 0) > 0
   )
 
   return (
@@ -959,6 +1403,11 @@ export default function ScopeOverviewPanel({ opportunity, assessment }: ScopeOve
           ) : (
             <EmptyState message="No evaluation criteria extracted." />
           )
+        )}
+
+        {/* Lifecycle */}
+        {activeFilter === 'lifecycle' && (
+          <LifecycleTab brief={brief} opportunity={opportunity} />
         )}
 
         {/* Post-Award */}

@@ -342,6 +342,7 @@ export default function OpportunityWorkspacePage() {
         <ScopeOverviewPanel
           opportunity={opportunity}
           assessment={assessment}
+          brief={opportunity?.opportunityBrief ?? null}
         />
       ),
     },
