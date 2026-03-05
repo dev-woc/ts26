@@ -45,24 +45,36 @@ export async function searchHistoricalContracts(
   try {
     const { naicsCode, keywords, agencyName, limit = 50 } = params
 
-    // Build search filters
+    // Build search filters — correct structure per USASpending API v2 docs
+    const fiveYearsAgo = new Date()
+    fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5)
+
     const filters: any = {
+      // Contracts only (A=BPA, B=Purchase Order, C=Delivery Order, D=Definitive Contract)
+      // Excludes grants, loans, and other non-contract award types
+      award_type_codes: ['A', 'B', 'C', 'D'],
       time_period: [
         {
-          start_date: '2020-01-01', // Last 4 years of data
+          start_date: fiveYearsAgo.toISOString().split('T')[0],
           end_date: new Date().toISOString().split('T')[0],
+          date_type: 'action_date',
         },
       ],
     }
 
     if (naicsCode) {
-      filters.naics_codes = [naicsCode]
+      // Must be { require: [...] } — not a bare array
+      filters.naics_codes = { require: [naicsCode] }
     }
 
-    if (keywords) {
+    // Note: keywords filter is very restrictive; omit when NAICS is provided
+    // to avoid empty results from keyword mismatch
+    if (keywords && !naicsCode) {
       filters.keywords = [keywords]
     }
 
+    // Agency filter is optional — omit if likely to narrow too aggressively
+    // (agency name must match USASpending's exact toptier name)
     if (agencyName) {
       filters.agencies = [{ name: agencyName, tier: 'toptier' }]
     }
@@ -205,34 +217,38 @@ export async function getPricingRecommendation(
   },
   estimatedCost?: number
 ): Promise<PricingAnalysis> {
-  const searchParams: USASpendingSearchParams = {
-    limit: 100,
-  }
+  // Strategy: search by NAICS + agency first; if empty, drop agency; if still empty, try 4-digit parent NAICS
+  const naics6 = opportunity.naicsCode ?? undefined
+  const naics4 = naics6?.slice(0, 4)
 
-  // Prioritize NAICS code for more accurate results
-  if (opportunity.naicsCode) {
-    searchParams.naicsCode = opportunity.naicsCode
-  }
-
-  // Use agency if available
-  if (opportunity.agency) {
-    searchParams.agencyName = opportunity.agency
-  }
-
-  // Extract keywords from title (simple approach)
-  if (opportunity.title) {
-    const words = opportunity.title
-      .toLowerCase()
-      .split(' ')
-      .filter((w) => w.length > 4) // Get meaningful words
-      .slice(0, 3) // Use top 3 words
-      .join(' ')
-
-    if (words) {
-      searchParams.keywords = words
+  // Pass 1: NAICS + agency (most specific)
+  if (naics6) {
+    const contracts = await searchHistoricalContracts({
+      naicsCode: naics6,
+      agencyName: opportunity.agency ?? undefined,
+      limit: 100,
+    })
+    if (contracts.length > 0) {
+      return analyzeHistoricalPricing(contracts, estimatedCost, naics6)
     }
   }
 
-  const contracts = await searchHistoricalContracts(searchParams)
-  return analyzeHistoricalPricing(contracts, estimatedCost, opportunity.naicsCode)
+  // Pass 2: NAICS only (drop agency — agency name might not match USASpending toptier name)
+  if (naics6) {
+    const contracts = await searchHistoricalContracts({ naicsCode: naics6, limit: 100 })
+    if (contracts.length > 0) {
+      return analyzeHistoricalPricing(contracts, estimatedCost, naics6)
+    }
+  }
+
+  // Pass 3: 4-digit parent NAICS (broader sector)
+  if (naics4 && naics4 !== naics6) {
+    const contracts = await searchHistoricalContracts({ naicsCode: naics4, limit: 100 })
+    if (contracts.length > 0) {
+      return analyzeHistoricalPricing(contracts, estimatedCost, naics4)
+    }
+  }
+
+  // No data found at any breadth
+  return analyzeHistoricalPricing([], estimatedCost, opportunity.naicsCode)
 }
