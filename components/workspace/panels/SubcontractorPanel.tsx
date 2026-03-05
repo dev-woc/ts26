@@ -36,6 +36,7 @@ interface SubcontractorPanelProps {
   opportunityId: string
   naicsCode?: string
   state?: string
+  placeOfPerformance?: { city: string | null, state: string | null }
   onRequestQuote?: (sub: Subcontractor) => void
   onSendDetails?: (sub: Subcontractor) => void
   onSubcontractorsUpdated?: () => void
@@ -82,11 +83,15 @@ function buildDefaultChecklist(
   return items
 }
 
+const RADIUS_TIERS = [25, 50, 100, 250] as const
+type RadiusMiles = typeof RADIUS_TIERS[number]
+
 export default function SubcontractorPanel({
   subcontractors,
   opportunityId,
   naicsCode,
   state,
+  placeOfPerformance,
   onRequestQuote,
   onSendDetails,
   onSubcontractorsUpdated,
@@ -99,6 +104,8 @@ export default function SubcontractorPanel({
   const [expandedCard, setExpandedCard] = useState<string | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
   const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
+  const [radiusMiles, setRadiusMiles] = useState<RadiusMiles>(50)
+  const [expandStatus, setExpandStatus] = useState<string | null>(null)
   // Track email input per vendor (local state until saved)
   const [emailInputs, setEmailInputs] = useState<Record<string, string>>({})
   // Track optimistic call state (in case server is slow)
@@ -174,25 +181,49 @@ export default function SubcontractorPanel({
     setApiError(null)
     setCleanupMessage(null)
     setSamWarning(null)
-    try {
-      const res = await fetch(`/api/opportunities/${opportunityId}/subcontractors/discover`, {
-        method: 'POST',
-      })
-      const data = await res.json()
+    setExpandStatus(null)
 
-      if (!res.ok || data.error) {
-        setApiError(data.message || data.error || 'Discovery failed')
-      } else {
-        if (data.samWarning) {
-          setSamWarning(data.samWarning)
+    const startIdx = RADIUS_TIERS.indexOf(radiusMiles)
+
+    try {
+      for (let i = startIdx; i < RADIUS_TIERS.length; i++) {
+        const currentRadius = RADIUS_TIERS[i]
+        if (i > startIdx) {
+          setExpandStatus(`No results at ${RADIUS_TIERS[i - 1]}mi — searching ${currentRadius}mi...`)
         }
-        onSubcontractorsUpdated?.()
+
+        const res = await fetch(`/api/opportunities/${opportunityId}/subcontractors/discover`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ radiusMiles: currentRadius }),
+        })
+        const data = await res.json()
+
+        if (!res.ok || data.error) {
+          setApiError(data.message || data.error || 'Discovery failed')
+          break
+        }
+
+        if (data.samWarning) setSamWarning(data.samWarning)
+
+        if (data.added > 0) {
+          setRadiusMiles(currentRadius)
+          setExpandStatus(null)
+          onSubcontractorsUpdated?.()
+          break
+        }
+
+        // 0 results — if we've exhausted all tiers, refresh anyway
+        if (i === RADIUS_TIERS.length - 1) {
+          onSubcontractorsUpdated?.()
+        }
       }
     } catch (error) {
       console.error('Auto-discover failed:', error)
       setApiError('Failed to connect to discovery service')
     } finally {
       setIsSearching(false)
+      setExpandStatus(null)
     }
   }
 
@@ -289,55 +320,87 @@ export default function SubcontractorPanel({
     <div className="h-full overflow-auto p-6">
       <div className="max-w-3xl mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-lg font-semibold text-stone-900">Subcontractors</h1>
-            <p className="text-sm text-stone-500 mt-1">
-              {subcontractors.length} vendor{subcontractors.length !== 1 ? 's' : ''}
-              {pendingVendors.length > 0 && ` (${pendingVendors.length} pending)`}
-              {googleCount > 0 && samCount > 0
-                ? ` — ${googleCount} Google, ${samCount} SAM.gov`
-                : googleCount > 0
-                ? ' from Google Maps'
-                : samCount > 0
-                ? ' from SAM.gov'
-                : ''}
-            </p>
+        <div className="mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-lg font-semibold text-stone-900">Subcontractors</h1>
+              <p className="text-sm text-stone-500 mt-1">
+                {subcontractors.length} vendor{subcontractors.length !== 1 ? 's' : ''}
+                {pendingVendors.length > 0 && ` (${pendingVendors.length} pending)`}
+                {googleCount > 0 && samCount > 0
+                  ? ` — ${googleCount} Google, ${samCount} SAM.gov`
+                  : googleCount > 0
+                  ? ' from Google Maps'
+                  : samCount > 0
+                  ? ' from SAM.gov'
+                  : ''}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Clean Duplicates Button */}
+              {subcontractors.length > 1 && (
+                <button
+                  onClick={handleCleanDuplicates}
+                  disabled={isCleaning}
+                  className="px-3 py-1.5 text-xs font-medium text-stone-500 bg-white border border-stone-200 rounded hover:bg-stone-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  title="Remove duplicate vendors"
+                >
+                  {isCleaning ? (
+                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  ) : (
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  )}
+                  {isCleaning ? 'Cleaning...' : 'Clean Duplicates'}
+                </button>
+              )}
+
+              {/* Radius Dropdown */}
+              <select
+                value={radiusMiles}
+                onChange={(e) => setRadiusMiles(Number(e.target.value) as RadiusMiles)}
+                disabled={isSearching}
+                className="px-2 py-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-200 rounded focus:outline-none focus:ring-1 focus:ring-stone-300 disabled:opacity-50"
+                title="Search radius"
+              >
+                {RADIUS_TIERS.map(r => (
+                  <option key={r} value={r}>{r}mi</option>
+                ))}
+              </select>
+
+              {/* Find Vendors Button */}
+              <button
+                onClick={handleAutoDiscover}
+                disabled={isSearching}
+                className="px-3 py-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-300 rounded hover:bg-stone-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <svg className={`h-3.5 w-3.5 ${isSearching ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                {isSearching ? (expandStatus ? 'Expanding...' : 'Searching...') : 'Find Vendors'}
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Clean Duplicates Button */}
-            {subcontractors.length > 1 && (
-              <button
-                onClick={handleCleanDuplicates}
-                disabled={isCleaning}
-                className="px-3 py-1.5 text-xs font-medium text-stone-500 bg-white border border-stone-200 rounded hover:bg-stone-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                title="Remove duplicate vendors"
-              >
-                {isCleaning ? (
-                  <svg className="h-3.5 w-3.5 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                ) : (
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                )}
-                {isCleaning ? 'Cleaning...' : 'Clean Duplicates'}
-              </button>
+          {/* Geography label */}
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-stone-400">
+            <svg className="h-3.5 w-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            {expandStatus ? (
+              <span className="text-stone-500 italic">{expandStatus}</span>
+            ) : placeOfPerformance?.city && placeOfPerformance?.state ? (
+              <span>Searching within <span className="font-medium text-stone-600">{radiusMiles}mi</span> of <span className="font-medium text-stone-600">{placeOfPerformance.city}, {placeOfPerformance.state}</span></span>
+            ) : placeOfPerformance?.state ? (
+              <span>Searching within <span className="font-medium text-stone-600">{placeOfPerformance.state}</span> (statewide)</span>
+            ) : (
+              <span>Searching nationally</span>
             )}
-
-            {/* Find Vendors Button */}
-            <button
-              onClick={handleAutoDiscover}
-              disabled={isSearching}
-              className="px-3 py-1.5 text-xs font-medium text-stone-600 bg-white border border-stone-300 rounded hover:bg-stone-50 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-            >
-              <svg className={`h-3.5 w-3.5 ${isSearching ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              {isSearching ? 'Searching...' : 'Find Vendors'}
-            </button>
           </div>
         </div>
 

@@ -11,6 +11,7 @@ import SOWPanel from '@/components/workspace/panels/SOWPanel'
 import EmailDraftPanel from '@/components/workspace/panels/EmailDraftPanel'
 import ScopeOverviewPanel from '@/components/workspace/panels/ScopeOverviewPanel'
 import type { RichAttachment } from '@/lib/types/attachment'
+import { extractCity, extractStateCode } from '@/lib/opportunity-classification'
 
 export default function OpportunityWorkspacePage() {
   const params = useParams()
@@ -202,6 +203,15 @@ export default function OpportunityWorkspacePage() {
 
   // Generate SOW synopsis for emails - must be before early returns to maintain hooks order
   const currentSOW = opportunity?.sows?.[0]
+
+  // Extract place of performance for SubcontractorPanel geo-radius UI
+  const placeOfPerformanceData = useMemo(() => ({
+    city: opportunity?.rawData ? extractCity(opportunity.rawData) : null,
+    state: opportunity?.rawData
+      ? (extractStateCode(opportunity.rawData) || opportunity?.state || null)
+      : (opportunity?.state || null),
+  }), [opportunity?.rawData, opportunity?.state])
+
   const sowSynopsis = useMemo(() => {
     if (!currentSOW?.content) return undefined
     const content = currentSOW.content
@@ -380,6 +390,7 @@ export default function OpportunityWorkspacePage() {
           opportunityId={opportunity.id}
           naicsCode={opportunity.naicsCode}
           state={opportunity.state}
+          placeOfPerformance={placeOfPerformanceData}
           parsedRequirements={opportunity.parsedAttachments?.structured}
           opportunityInfo={{ naicsCode: opportunity.naicsCode, state: opportunity.state, setAside: opportunity.setAside }}
           onRequestQuote={(sub) => {

@@ -39,6 +39,7 @@ run_test "Login Flow"           "tests/e2e/login.sh"
 run_test "Opportunities List"   "tests/e2e/opportunities.sh"
 run_test "SOW Generation"       "tests/e2e/sow.sh"
 run_test "Advanced Filtering"   "tests/e2e/filtering.sh"
+run_test "Subcontractors Geo"   "tests/e2e/subcontractors.sh"
 
 echo ""
 echo "========================================"

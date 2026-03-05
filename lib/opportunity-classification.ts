@@ -125,6 +125,18 @@ export function extractStateCode(rawData: any): string | null {
 }
 
 /**
+ * Extract city name from raw place of performance data.
+ * Returns city name string or null.
+ */
+export function extractCity(rawData: any): string | null {
+  const pop = rawData?.placeOfPerformance
+  if (!pop) return null
+  if (pop.city?.name) return pop.city.name
+  if (pop.cityName) return pop.cityName
+  return null
+}
+
+/**
  * Extract city + state text for location-specific searches.
  */
 export function extractPlaceOfPerformance(rawData: any, fallbackState?: string | null): string {

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { findSubcontractorsForOpportunity } from '@/lib/google-places'
 import { searchSamEntities, samEntityToSubcontractor } from '@/lib/samgov'
-import { isProductSolicitation, extractStateCode, extractPlaceOfPerformance } from '@/lib/opportunity-classification'
+import { isProductSolicitation, extractStateCode, extractPlaceOfPerformance, extractCity } from '@/lib/opportunity-classification'
 
 /**
  * Normalize phone to digits only for comparison.
@@ -33,6 +33,10 @@ export async function POST(
 ) {
   try {
     const { id: opportunityId } = await params
+
+    // Parse optional radius from request body
+    const body = await request.json().catch(() => ({}))
+    const radiusMiles: 25 | 50 | 100 | 250 = [25, 50, 100, 250].includes(body.radiusMiles) ? body.radiusMiles : 50
 
     // Get opportunity details
     const opportunity = await prisma.opportunity.findUnique({
@@ -72,6 +76,7 @@ export async function POST(
 
     // Extract location info
     const stateCode = extractStateCode(opportunity.rawData) || opportunity.state || null
+    const city = extractCity(opportunity.rawData)
     const placeOfPerformance = extractPlaceOfPerformance(opportunity.rawData, opportunity.state)
 
     // For services: use specific location. For products: use broad "United States"
@@ -133,12 +138,14 @@ export async function POST(
 
     // === Source 1: Google Places ===
     if (isApiConfigured) {
-      console.log(`[Discover] Searching Google Places: NAICS=${opportunity.naicsCode}, location="${searchLocation}", title="${opportunity.title?.substring(0, 50)}"`)
+      console.log(`[Discover] Searching Google Places: NAICS=${opportunity.naicsCode}, location="${searchLocation}", radius=${radiusMiles}mi, title="${opportunity.title?.substring(0, 50)}"`)
       const vendors = await findSubcontractorsForOpportunity({
         naicsCode: opportunity.naicsCode,
         placeOfPerformance: classification.isProduct ? null : placeOfPerformance,
         stateCode: classification.isProduct ? null : stateCode,
         title: opportunity.title,
+        radiusMiles: classification.isProduct ? 250 : radiusMiles,
+        city: classification.isProduct ? null : city,
       })
 
       for (const vendor of vendors) {
@@ -214,6 +221,7 @@ export async function POST(
       return NextResponse.json({
         message: 'No new vendors found for this opportunity.',
         added: 0,
+        geography: { city, state: stateCode, radiusMiles },
         ...(samWarning && { samWarning }),
       })
     }
@@ -231,6 +239,7 @@ export async function POST(
       message: `Found ${result.count} vendors (${googleCount} Google Maps, ${samCount} SAM.gov)`,
       added: result.count,
       sources: { google: googleCount, sam: samCount },
+      geography: { city, state: stateCode, radiusMiles },
       ...(samWarning && { samWarning }),
     })
   } catch (error) {

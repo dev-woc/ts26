@@ -111,6 +111,14 @@ const STATE_NAMES: Record<string, string> = {
 }
 
 /**
+ * Returns true when a Google formatted_address contains the given city name.
+ * Case-insensitive substring match.
+ */
+function addressMatchesCity(address: string, city: string): boolean {
+  return address.toLowerCase().includes(city.toLowerCase())
+}
+
+/**
  * Returns true when a Google formatted_address belongs to the given state.
  * Google addresses look like: "123 Main St, Anchorage, AK 99501, USA"
  * We match the 2-letter state code as a word boundary to avoid false hits
@@ -246,8 +254,12 @@ export async function findSubcontractorsForOpportunity(opportunity: {
   /** 2-letter state code for geographic bounding box bias e.g. "AK" */
   stateCode?: string | null
   title?: string
+  /** Search radius tier — controls query location and post-filter granularity */
+  radiusMiles?: 25 | 50 | 100 | 250
+  /** City name for city-level post-filtering at 25mi radius */
+  city?: string | null
 }): Promise<Subcontractor[]> {
-  const { naicsCode, placeOfPerformance, stateCode, title } = opportunity
+  const { naicsCode, placeOfPerformance, stateCode, title, radiusMiles = 50, city } = opportunity
 
   // Build search queries — prioritize NAICS, then title keywords
   let searchQueries: string[] = []
@@ -284,8 +296,12 @@ export async function findSubcontractorsForOpportunity(opportunity: {
     }
   }
 
-  // Use the full place of performance for the text query (most specific), fall back to state, then US
-  const location = placeOfPerformance || (stateCode ? `${stateCode}, USA` : 'United States')
+  // At 100+ mi: use state-level query location for broader results
+  // At <100 mi: use city-level place of performance for tighter bias
+  const location = radiusMiles >= 100
+    ? (stateCode ? `${stateCode}, USA` : placeOfPerformance || 'United States')
+    : placeOfPerformance || (stateCode ? `${stateCode}, USA` : 'United States')
+
   const allSubcontractors: Subcontractor[] = []
   const seenNames = new Set<string>()
   const seenPlaceIds = new Set<string>()
@@ -295,7 +311,12 @@ export async function findSubcontractorsForOpportunity(opportunity: {
     // Pass stateCode so searchBusinesses can add a locationbias bounding box
     const businesses = await searchBusinesses(query, location, 5, stateCode)
 
-    for (const business of businesses) {
+    // At 25mi: additionally post-filter by city name for tightest radius
+    const filteredBusinesses = (radiusMiles === 25 && city)
+      ? businesses.filter(b => addressMatchesCity(b.address, city))
+      : businesses
+
+    for (const business of filteredBusinesses) {
       // Deduplicate by name AND placeId
       const nameLower = business.name.toLowerCase()
       if (seenNames.has(nameLower)) continue
