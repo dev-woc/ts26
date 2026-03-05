@@ -27,6 +27,11 @@ interface EmailOptions {
   html?: string
   from?: string
   attachments?: EmailAttachment[]
+  /** Gmail OAuth tokens — required when EMAIL_PROVIDER=gmail */
+  googleAccessToken?: string
+  googleRefreshToken?: string
+  /** Gmail threadId — pass to reply in an existing thread */
+  gmailThreadId?: string
 }
 
 interface EmailResult {
@@ -47,6 +52,8 @@ export async function sendEmail(options: EmailOptions): Promise<EmailResult> {
   }
 
   switch (provider.toLowerCase()) {
+    case 'gmail':
+      return sendViaGmailProvider(options)
     case 'smtp':
       return sendViaSMTP(options)
     case 'sendgrid':
@@ -180,5 +187,33 @@ async function sendViaSendGrid(options: EmailOptions): Promise<EmailResult> {
       success: false,
       error: error instanceof Error ? error.message : 'SendGrid send failed',
     }
+  }
+}
+
+async function sendViaGmailProvider(options: EmailOptions): Promise<EmailResult> {
+  if (!options.googleAccessToken) {
+    return {
+      success: false,
+      error: 'Gmail send requires a Google OAuth access token. Sign in with Google to enable email.',
+    }
+  }
+
+  const { sendViaGmail } = await import('@/lib/gmail')
+  const result = await sendViaGmail({
+    accessToken: options.googleAccessToken,
+    refreshToken: options.googleRefreshToken,
+    to: options.to,
+    subject: options.subject,
+    body: options.body,
+    html: options.html,
+    from: options.from,
+    threadId: options.gmailThreadId,
+    attachments: options.attachments,
+  })
+
+  return {
+    success: result.success,
+    messageId: result.messageId,
+    error: result.error,
   }
 }

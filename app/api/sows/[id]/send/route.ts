@@ -214,6 +214,8 @@ export async function POST(
         content: htmlDocument,
         contentType: 'text/html',
       }],
+      googleAccessToken: (session as any).googleAccessToken,
+      googleRefreshToken: (session as any).googleRefreshToken,
     })
 
     if (!emailResult.success) {

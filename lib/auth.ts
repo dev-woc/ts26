@@ -13,6 +13,9 @@ declare module "next-auth" {
       id: string
       role: string
     } & DefaultSession["user"]
+    /** Google OAuth access token — available when user signed in with Google */
+    googleAccessToken?: string
+    googleRefreshToken?: string
   }
 
   interface User {
@@ -61,10 +64,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
     }),
 
-    // Google OAuth (optional)
+    // Google OAuth — Gmail scopes for sending + thread sync
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      authorization: {
+        params: {
+          scope: [
+            'openid',
+            'email',
+            'profile',
+            'https://www.googleapis.com/auth/gmail.send',
+            'https://www.googleapis.com/auth/gmail.modify',
+          ].join(' '),
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
     })
   ],
 
@@ -73,10 +89,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
 
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
       if (user) {
         token.id = user.id
         token.role = user.role
+      }
+      // Capture Google OAuth tokens on first sign-in
+      if (account?.provider === 'google') {
+        token.googleAccessToken = account.access_token
+        token.googleRefreshToken = account.refresh_token
       }
       return token
     },
@@ -84,6 +105,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (session.user) {
         session.user.id = token.id as string
         session.user.role = token.role as string
+      }
+      // Expose tokens to server-side code via session
+      if (token.googleAccessToken) {
+        session.googleAccessToken = token.googleAccessToken as string
+      }
+      if (token.googleRefreshToken) {
+        session.googleRefreshToken = token.googleRefreshToken as string
       }
       return session
     }
