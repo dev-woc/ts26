@@ -376,15 +376,32 @@ export default function OpportunitySummaryPanel({
                 </svg>
                 Solicitation Documents
               </h2>
-              {isAnalyzing && (
-                <span className="flex items-center gap-1.5 text-xs text-stone-400">
-                  <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Analyzing attachments…
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                {isAnalyzing ? (
+                  <span className="flex items-center gap-1.5 text-xs text-stone-400">
+                    <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Analyzing…
+                  </span>
+                ) : attachments.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      setIsAnalyzing(true)
+                      try {
+                        await fetch(`/api/opportunities/${opportunity.id}/attachments/analyze?force=true`, { method: 'POST' })
+                        const attRes = await fetch(`/api/opportunities/${opportunity.id}/attachments`)
+                        if (attRes.ok) setAttachments((await attRes.json()).attachments || [])
+                      } catch { /* silent */ } finally { setIsAnalyzing(false) }
+                    }}
+                    className="text-[10px] text-stone-400 hover:text-stone-600 transition-colors"
+                    title="Re-analyze attachment names with AI"
+                  >
+                    Re-analyze names
+                  </button>
+                )}
+              </div>
             </div>
 
             {loadingAttachments ? (

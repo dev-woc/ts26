@@ -44,7 +44,26 @@ export async function GET(
         return NextResponse.redirect(attachment.url)
       }
 
-      const contentType = response.headers.get('content-type') || 'application/octet-stream'
+      // Infer MIME type from file extension when S3 returns generic octet-stream
+      const remoteType = response.headers.get('content-type') || 'application/octet-stream'
+      const ext = attachment.name.split('.').pop()?.toLowerCase().split('?')[0] ?? ''
+      const MIME_MAP: Record<string, string> = {
+        pdf:  'application/pdf',
+        docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        doc:  'application/msword',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        xls:  'application/vnd.ms-excel',
+        pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        txt:  'text/plain',
+        png:  'image/png',
+        jpg:  'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif:  'image/gif',
+      }
+      const contentType = (remoteType === 'application/octet-stream' && MIME_MAP[ext])
+        ? MIME_MAP[ext]
+        : remoteType
+
       const data = await response.arrayBuffer()
 
       // Sanitize filename for Content-Disposition header

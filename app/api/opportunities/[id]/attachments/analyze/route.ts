@@ -15,7 +15,7 @@ import { analyzeAttachments } from '@/lib/openai'
  * Upserts AttachmentFormData records.
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -25,6 +25,8 @@ export async function POST(
     }
 
     const { id } = await params
+    const url = new URL(request.url)
+    const force = url.searchParams.get('force') === 'true'
 
     const opportunity = await prisma.opportunity.findUnique({
       where: { id },
@@ -75,9 +77,9 @@ export async function POST(
       }
     }
 
-    // Filter: skip already-analyzed AND manually-renamed attachments
+    // Filter: skip manually-renamed; skip already-analyzed unless force=true
     const toAnalyze = rawAttachments.filter(
-      (att) => !alreadyAnalyzed.has(att.id) && !manualRenames.has(att.id)
+      (att) => !manualRenames.has(att.id) && (force || !alreadyAnalyzed.has(att.id))
     )
 
     const skipped = rawAttachments.length - toAnalyze.length

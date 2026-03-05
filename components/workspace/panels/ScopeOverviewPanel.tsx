@@ -1301,24 +1301,30 @@ function OverviewTab({
 
       {/* Narrative overview */}
       {hasBrief ? (
-        <div className="bg-white border border-stone-200 rounded-xl p-4 space-y-3">
-          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider">What They&apos;re Buying</p>
-          {brief?.extendedOverview ? (
-            brief.extendedOverview.split(/\n+/).filter(Boolean).map((para, i) => (
-              <p key={i} className="text-sm text-stone-700 leading-relaxed">{para}</p>
-            ))
-          ) : (
-            <p className="text-sm text-stone-700 leading-relaxed">{brief?.whatTheyAreBuying}</p>
-          )}
+        <div className="bg-white border border-stone-200 rounded-xl p-5">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-4">What They&apos;re Buying</p>
+          <div>
+            {brief?.extendedOverview ? (
+              brief.extendedOverview
+                .split(/\n\n+|\n(?=[A-Z])/)
+                .flatMap(chunk => chunk.split(/\n/).filter(Boolean))
+                .filter(Boolean)
+                .map((para, i) => (
+                  <p key={i} className="text-sm text-stone-700 leading-7 mb-4 last:mb-0">{para}</p>
+                ))
+            ) : (
+              <p className="text-sm text-stone-700 leading-7">{brief?.whatTheyAreBuying}</p>
+            )}
+          </div>
           {brief?.endUser && (
-            <p className="text-xs text-stone-500 italic border-t border-stone-100 pt-2">End user: {brief.endUser}</p>
+            <p className="text-xs text-stone-500 italic border-t border-stone-100 pt-3 mt-4">End user: {brief.endUser}</p>
           )}
         </div>
       ) : (
-        <div className="bg-white border border-stone-100 rounded-xl p-4">
-          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-2">Description</p>
+        <div className="bg-white border border-stone-100 rounded-xl p-5">
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-4">Description</p>
           {opportunity.description ? (
-            <p className="text-sm text-stone-700 leading-relaxed whitespace-pre-wrap">{opportunity.description.slice(0, 2000)}</p>
+            <p className="text-sm text-stone-700 leading-7 whitespace-pre-wrap">{opportunity.description.slice(0, 2000)}</p>
           ) : (
             <p className="text-xs text-stone-400 italic">Generate the Opportunity Brief (Summary tab) for a plain-language overview.</p>
           )}
