@@ -86,28 +86,26 @@ export async function generateSOWSections(input: SOWGenerationInput): Promise<SO
     ? `\n\nSOLICITATION DESCRIPTION:\n${description.slice(0, 3000)}`
     : ''
 
-  const prompt = `You are writing a professional federal government Statement of Work (SOW) for a prime contractor to send to a subcontractor.
+  const prompt = `You are writing a Statement of Work (SOW) for a prime contractor to send to a subcontractor. Write in plain, direct language a small business owner can act on — no jargon, no padding, no boilerplate.
 
 OPPORTUNITY DETAILS:
 ${contextBlock}${parsedBlock}
 
-Generate exactly 6 SOW sections in JSON format. Each section must have:
-- "title": section heading (e.g. "1.0 BACKGROUND & PURPOSE")
-- "summary": one concise sentence describing the section (max 120 chars)
-- "bullets": array of 3–6 specific, actionable bullet points
-- "details": 2–4 professional paragraphs of full section text
+Generate exactly 6 SOW sections in JSON. Each section must have:
+- "title": short heading (e.g. "1.0 Background")
+- "summary": one plain sentence — what this section covers (max 100 chars)
+- "bullets": 3–5 specific, actionable bullet points drawn directly from this solicitation's data
+- "details": 1–2 short paragraphs of plain prose. Every sentence must be specific to this solicitation. Omit anything unknown — never invent filler.
 
-Sections to generate:
-1. 1.0 BACKGROUND & PURPOSE — context, why this SOW exists, what the solicitation is for
-2. 2.0 SCOPE OF SERVICES — exactly what the subcontractor must provide, drawn from the solicitation
-3. 3.0 PLACE OF PERFORMANCE — where work is performed, any site-specific requirements
-4. 4.0 PERIOD OF PERFORMANCE — timeline, key dates, response deadline
-5. 5.0 DELIVERABLES — specific outputs the subcontractor must deliver
-6. 6.0 COMPLIANCE REQUIREMENTS — regulatory, FAR, quality, and certification requirements
+Sections:
+1. 1.0 Background — what this contract is, who issued it, why it exists
+2. 2.0 Scope of Work — precisely what the subcontractor must do
+3. 3.0 Place of Performance — where work happens
+4. 4.0 Period of Performance — start/end dates and key deadlines
+5. 5.0 Deliverables — concrete outputs the subcontractor must deliver
+6. 6.0 Compliance — only the specific regulatory and certification requirements that apply here
 
-Write in formal, professional government contracting language. Be specific to this solicitation — do not use generic filler text. Reference the actual solicitation number and agency throughout.
-
-Return ONLY a valid JSON array of 6 section objects. No markdown, no explanation.`
+Return ONLY a valid JSON array of 6 objects. No markdown, no explanation.`
 
   const response = await openai.chat.completions.create({
     model: 'gpt-4o',

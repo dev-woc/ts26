@@ -451,7 +451,7 @@ export default function SOWPanel({
                       </div>
                       <input
                         type="text"
-                        value={section.title.replace(/^\d+\.\s*/, '')}
+                        value={section.title.replace(/^[\d.]+\s*/, '')}
                         onChange={(e) => handleSectionTitleChange(idx, `${idx + 1}. ${e.target.value}`)}
                         onBlur={() => handleBlurSave(sections)}
                         placeholder="Section title"
