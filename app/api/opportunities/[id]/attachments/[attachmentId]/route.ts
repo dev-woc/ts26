@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { auth } from '@/lib/auth'
-import { extractAttachmentsFromRawData } from '@/lib/samgov'
+import { getOpportunityAttachments } from '@/lib/samgov'
 import type { RichAttachment } from '@/lib/types/attachment'
 
 // Characters not allowed in filenames
@@ -61,6 +61,7 @@ export async function PATCH(
     const opportunity = await prisma.opportunity.findUnique({
       where: { id },
       select: {
+        solicitationNumber: true,
         rawData: true,
         attachmentOverrides: {
           select: {
@@ -76,8 +77,12 @@ export async function PATCH(
       return NextResponse.json({ error: 'Opportunity not found' }, { status: 404 })
     }
 
-    // Find the original SAM.gov attachment
-    const rawAttachments = extractAttachmentsFromRawData(opportunity.rawData)
+    // Find the original SAM.gov attachment (use getOpportunityAttachments so it
+    // falls back to a fresh SAM.gov fetch if rawData has no extractable attachments)
+    const rawAttachments = await getOpportunityAttachments(
+      opportunity.solicitationNumber ?? '',
+      opportunity.rawData
+    )
     const rawAttachment = rawAttachments.find((a) => a.id === attachmentId)
 
     if (!rawAttachment) {

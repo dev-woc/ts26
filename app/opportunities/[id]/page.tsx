@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { format, differenceInDays } from 'date-fns'
 import WorkspaceLayout from '@/components/workspace/WorkspaceLayout'
-import DocumentDirectory from '@/components/workspace/DocumentDirectory'
 import OpportunitySummaryPanel from '@/components/workspace/panels/OpportunitySummaryPanel'
 import BidEditorPanel from '@/components/workspace/panels/BidEditorPanel'
 import SubcontractorPanel from '@/components/workspace/panels/SubcontractorPanel'
@@ -282,31 +281,6 @@ export default function OpportunityWorkspacePage() {
     }
   }
 
-  // Build document list for sidebar
-  const documents: any[] = []
-  if (opportunity.bids) {
-    opportunity.bids.forEach((bid: any) => {
-      documents.push({
-        id: bid.id,
-        type: 'bid',
-        title: `Bid - $${bid.recommendedPrice?.toLocaleString() || '0'}`,
-        status: bid.status,
-        updatedAt: bid.updatedAt,
-      })
-    })
-  }
-  if (opportunity.sows) {
-    opportunity.sows.forEach((sow: any) => {
-      documents.push({
-        id: sow.id,
-        type: 'sow',
-        title: `SOW v${sow.version}`,
-        status: sow.status,
-        updatedAt: sow.updatedAt || sow.generatedAt,
-      })
-    })
-  }
-
   // Determine next action (Workflow: SOW → Subs → Bid)
   let nextAction = workflowState.action
   if (currentBid?.status === 'DRAFT') {
@@ -358,7 +332,7 @@ export default function OpportunityWorkspacePage() {
     },
     {
       id: 'scope',
-      label: 'Scope',
+      label: 'Compliance',
       icon: (
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
@@ -513,19 +487,288 @@ export default function OpportunityWorkspacePage() {
         </div>
       }
       sidebarContent={
-        <DocumentDirectory
-          documents={documents}
-          activeDocumentId={activePanel === 'bid' ? currentBid?.id : activePanel === 'sow' ? currentSOW?.id : undefined}
-          onSelectDocument={(doc) => {
-            if (doc.type === 'bid') setActivePanel('bid')
-            else if (doc.type === 'sow') setActivePanel('sow')
-          }}
-          onCreateNew={(type) => {
-            if (type === 'bid') handleCreateBid()
-            else if (type === 'sow') handleGenerateSOW()
-          }}
+        <OpportunitySidebar
+          opportunity={opportunity}
+          assessment={assessment}
+          currentBid={currentBid}
+          currentSOW={currentSOW}
+          hasSubcontractors={hasSubcontractors}
+          generatingSOW={generatingSOW}
+          discoveringSubcontractors={discoveringSubcontractors}
+          onGenerateSOW={handleGenerateSOW}
+          onSeeSOW={() => setActivePanel('sow')}
+          onFindSubcontractors={handleDiscoverSubcontractors}
+          onSeeSubcontractors={() => setActivePanel('subcontractors')}
+          onCreateBid={handleCreateBid}
+          onSeeBid={() => setActivePanel('bid')}
         />
       }
     />
   )
+}
+
+// ─── Opportunity Details Sidebar ──────────────────────────────────────────────
+
+function OpportunitySidebar({
+  opportunity,
+  assessment,
+  currentBid,
+  currentSOW,
+  hasSubcontractors,
+  generatingSOW,
+  discoveringSubcontractors,
+  onGenerateSOW,
+  onSeeSOW,
+  onFindSubcontractors,
+  onSeeSubcontractors,
+  onCreateBid,
+  onSeeBid,
+}: {
+  opportunity: any
+  assessment: any
+  currentBid: any
+  currentSOW: any
+  hasSubcontractors: boolean
+  generatingSOW: boolean
+  discoveringSubcontractors: boolean
+  onGenerateSOW: () => void
+  onSeeSOW: () => void
+  onFindSubcontractors: () => void
+  onSeeSubcontractors: () => void
+  onCreateBid: () => void
+  onSeeBid: () => void
+}) {
+  const raw = opportunity.rawData as any
+
+  // Extract point of contact
+  const pocs = raw?.pointOfContact
+    ? Array.isArray(raw.pointOfContact) ? raw.pointOfContact : [raw.pointOfContact]
+    : []
+  const primaryPOC = pocs[0]
+
+  const deadline = opportunity.responseDeadline ? new Date(opportunity.responseDeadline) : null
+  const daysLeft = deadline ? differenceInDays(deadline, new Date()) : null
+  const postedDate = opportunity.postedDate ? new Date(opportunity.postedDate) : null
+
+  return (
+    <div className="h-full overflow-y-auto p-4 space-y-5">
+
+      {/* Workflow quick actions */}
+      <div className="space-y-2">
+        <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider">Actions</p>
+        {currentSOW ? (
+          <button onClick={onSeeSOW} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 bg-stone-50 border border-stone-200 rounded hover:bg-stone-100 flex items-center gap-2 transition-colors">
+            <span className="w-2 h-2 rounded-full bg-stone-500 flex-shrink-0" />
+            View SOW
+          </button>
+        ) : (
+          <button onClick={onGenerateSOW} disabled={generatingSOW} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 bg-stone-50 border border-stone-200 rounded hover:bg-stone-100 flex items-center gap-2 transition-colors disabled:opacity-50">
+            {generatingSOW ? (
+              <svg className="animate-spin w-2 h-2 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            ) : (
+              <span className="w-2 h-2 rounded-full bg-stone-300 flex-shrink-0" />
+            )}
+            {generatingSOW ? 'Generating SOW…' : 'Generate SOW'}
+          </button>
+        )}
+        {hasSubcontractors ? (
+          <button onClick={onSeeSubcontractors} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 bg-stone-50 border border-stone-200 rounded hover:bg-stone-100 flex items-center gap-2 transition-colors">
+            <span className="w-2 h-2 rounded-full bg-stone-500 flex-shrink-0" />
+            View Subcontractors
+          </button>
+        ) : (
+          <button onClick={onFindSubcontractors} disabled={discoveringSubcontractors} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 bg-stone-50 border border-stone-200 rounded hover:bg-stone-100 flex items-center gap-2 transition-colors disabled:opacity-50">
+            <span className="w-2 h-2 rounded-full bg-stone-300 flex-shrink-0" />
+            {discoveringSubcontractors ? 'Finding subs…' : 'Find Subcontractors'}
+          </button>
+        )}
+        {currentBid ? (
+          <button onClick={onSeeBid} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 bg-stone-50 border border-stone-200 rounded hover:bg-stone-100 flex items-center gap-2 transition-colors">
+            <span className="w-2 h-2 rounded-full bg-stone-500 flex-shrink-0" />
+            View Bid — ${currentBid.recommendedPrice?.toLocaleString()}
+          </button>
+        ) : (
+          <button onClick={onCreateBid} disabled={!currentSOW || !hasSubcontractors} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-400 bg-stone-50 border border-stone-100 rounded flex items-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" title={!currentSOW ? 'Generate SOW first' : 'Find subcontractors first'}>
+            <span className="w-2 h-2 rounded-full bg-stone-200 flex-shrink-0" />
+            Create Bid
+          </button>
+        )}
+      </div>
+
+      {/* Bid estimate tiles */}
+      {assessment && (
+        <div>
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-2">Bid Estimate</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <SidebarTile label="Value" value={`$${formatSidebarCurrency(assessment.estimatedValue)}`} />
+            <SidebarTile label="Cost" value={`$${formatSidebarCurrency(assessment.estimatedCost)}`} />
+            <SidebarTile
+              label="Margin"
+              value={`${assessment.profitMarginPercent?.toFixed(0)}%`}
+              subValue={`$${formatSidebarCurrency(assessment.profitMarginDollar)}`}
+              highlight={assessment.profitMarginPercent >= 20}
+            />
+            {assessment.recommendation && (
+              <SidebarTile
+                label="Decision"
+                value={assessment.recommendation}
+                highlight={assessment.recommendation === 'GO'}
+              />
+            )}
+          </div>
+
+          {/* Data source attribution */}
+          <div className="mt-2 flex items-start gap-1.5">
+            <svg className="h-3 w-3 text-stone-300 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-[10px] text-stone-400 leading-snug">
+              {currentBid?.source === 'usaspending_api'
+                ? <>Source: <span className="font-medium">USASpending.gov</span> — {(currentBid.historicalData as any)?.totalContracts ?? '?'} comparable contracts · Confidence: <span className="font-medium capitalize">{currentBid.confidence ?? 'unknown'}</span></>
+                : currentBid?.source === 'cost_based'
+                  ? <>Source: <span className="font-medium">Cost-based estimate</span> · Confidence: <span className="font-medium capitalize">{currentBid?.confidence ?? 'low'}</span></>
+                  : currentBid
+                    ? <>Source: <span className="font-medium">Default fallback</span> — insufficient historical data · Enter manual estimate for accuracy</>
+                    : <>Source: <span className="font-medium">Assessment only</span> — create a bid for USASpending data</>
+              }
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Opportunity detail tiles — 2-column grid */}
+      <div>
+        <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-2">Opportunity</p>
+        <div className="grid grid-cols-2 gap-1.5">
+          {daysLeft !== null && (
+            <SidebarTile
+              label="Days Left"
+              value={daysLeft <= 0 ? 'Expired' : String(daysLeft)}
+              subValue={daysLeft > 0 ? 'days remaining' : undefined}
+              dark
+              span
+            />
+          )}
+          {opportunity.agency && (
+            <SidebarTile label="Agency" value={opportunity.agency} span wrap />
+          )}
+          {opportunity.naicsCode && (
+            <SidebarTile label="NAICS" value={opportunity.naicsCode} subValue={opportunity.naicsDescription} span />
+          )}
+          {(opportunity.placeOfPerformance || opportunity.state) && (
+            <SidebarTile label="Location" value={opportunity.placeOfPerformance || opportunity.state} />
+          )}
+          {opportunity.setAside && (
+            <SidebarTile label="Set-Aside" value={formatSetAside(opportunity.setAside)} />
+          )}
+          {opportunity.contractType && (
+            <SidebarTile label="Contract Type" value={opportunity.contractType} />
+          )}
+          {postedDate && (
+            <SidebarTile label="Posted" value={format(postedDate, 'MMM d, yyyy')} />
+          )}
+          {deadline && (
+            <SidebarTile
+              label="Deadline"
+              value={format(deadline, 'MMM d, yyyy')}
+              subValue={daysLeft !== null ? (daysLeft <= 0 ? 'Expired' : `${daysLeft} days left`) : undefined}
+              highlight={daysLeft !== null && daysLeft <= 14 && daysLeft > 0}
+              span
+            />
+          )}
+          {opportunity.department && (
+            <SidebarTile label="Department" value={opportunity.department} span />
+          )}
+        </div>
+      </div>
+
+      {/* Point of Contact */}
+      {primaryPOC && (
+        <div>
+          <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider mb-2">Point of Contact</p>
+          <div className="space-y-1">
+            {(primaryPOC.fullName || primaryPOC.firstName) && (
+              <p className="text-xs font-medium text-stone-700">
+                {primaryPOC.fullName || `${primaryPOC.firstName || ''} ${primaryPOC.lastName || ''}`.trim()}
+              </p>
+            )}
+            {primaryPOC.title && (
+              <p className="text-xs text-stone-500">{primaryPOC.title}</p>
+            )}
+            {primaryPOC.email && (
+              <a href={`mailto:${primaryPOC.email}`} className="text-xs text-stone-600 hover:text-stone-800 block truncate underline underline-offset-2">
+                {primaryPOC.email}
+              </a>
+            )}
+            {primaryPOC.phone && (
+              <p className="text-xs text-stone-500">{primaryPOC.phone}</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SidebarTile({
+  label,
+  value,
+  subValue,
+  highlight,
+  span,
+  wrap,
+  dark,
+}: {
+  label: string
+  value: string
+  subValue?: string
+  highlight?: boolean
+  span?: boolean
+  wrap?: boolean
+  dark?: boolean
+}) {
+  if (dark) {
+    return (
+      <div className={`border rounded-lg p-3 flex flex-col items-center justify-center text-center ${span ? 'col-span-2' : ''} bg-stone-800 border-stone-800`}>
+        <p className="text-[10px] uppercase tracking-wide text-stone-400 mb-1">{label}</p>
+        <p className="text-3xl font-bold text-white leading-none">{value}</p>
+        {subValue && (
+          <p className="text-[10px] text-stone-400 mt-1">{subValue}</p>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className={`border rounded-lg p-2.5 ${span ? 'col-span-2' : ''} bg-white border-stone-200`}>
+      <p className="text-[10px] mb-0.5 uppercase tracking-wide text-stone-400">{label}</p>
+      <p className={`text-xs font-medium ${wrap ? 'leading-snug' : 'truncate'} ${highlight ? 'text-stone-900' : 'text-stone-700'}`} title={value}>
+        {value}
+      </p>
+      {subValue && (
+        <p className={`text-[10px] mt-0.5 ${wrap ? 'leading-snug' : 'truncate'} text-stone-400`} title={subValue}>
+          {subValue}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function formatSidebarCurrency(amount: number): string {
+  if (!amount) return '—'
+  if (amount >= 1000000) return `${(amount / 1000000).toFixed(1)}M`
+  if (amount >= 1000) return `${(amount / 1000).toFixed(0)}K`
+  return amount.toLocaleString()
+}
+
+function formatSetAside(setAside?: string): string {
+  if (!setAside) return 'Full & Open'
+  const mapping: Record<string, string> = {
+    'SBA': 'Small Business', 'SDVOSB': 'Service-Disabled Veteran-Owned',
+    'WOSB': 'Women-Owned', '8A': '8(a) Program', 'HUBZONE': 'HUBZone',
+  }
+  return mapping[setAside] || setAside.replace(/_/g, ' ')
 }

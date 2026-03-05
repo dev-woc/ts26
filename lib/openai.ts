@@ -227,6 +227,7 @@ Return ONLY valid JSON. No markdown fences, no extra text.`
 
 export interface OpportunityBrief {
   whatTheyAreBuying: string
+  extendedOverview?: string
   endUser?: string
   placeOfPerformance: {
     location: string
@@ -324,7 +325,8 @@ ${contextBlock}${parsedBlock}
 
 Return a JSON object matching this exact structure:
 {
-  "whatTheyAreBuying": "2–4 plain-English sentences. What is the government buying? Who is the end user? What is the core work?",
+  "whatTheyAreBuying": "2–3 plain-English sentences. What is the government buying? Who is the end user? What is the core work?",
+  "extendedOverview": "4–7 paragraphs of plain-language narrative. Cover: (1) the full scope and nature of the work, (2) operational context and why the agency needs this, (3) what day-to-day performance looks like, (4) key technical or specialized requirements, (5) notable risks or complexities a small business should understand, (6) how success will be measured. Write for a non-government project manager who is deciding whether to pursue this bid.",
   "endUser": "Who benefits from or uses the delivered services/products (e.g. 'Army personnel at Fort Knox'). Omit if unclear.",
   "placeOfPerformance": {
     "location": "City, State (or 'Multiple locations' or 'TBD')",
@@ -371,7 +373,7 @@ Return ONLY valid JSON. No markdown, no extra text.`
     model: 'gpt-4o',
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.2,
-    max_tokens: 2000,
+    max_tokens: 3500,
     response_format: { type: 'json_object' },
   })
 
@@ -383,6 +385,131 @@ Return ONLY valid JSON. No markdown, no extra text.`
     return parsed
   } catch {
     throw new Error(`Failed to parse brief response: ${raw.slice(0, 200)}`)
+  }
+}
+
+// ─── Attachment Analysis ──────────────────────────────────────────────────────
+
+/** Known government form patterns — checked against filename before calling LLM */
+const FORM_PATTERNS: Array<{ pattern: RegExp; formType: string }> = [
+  { pattern: /SF[-_]?1449/i, formType: 'SF-1449' },
+  { pattern: /SF[-_]?33\b/i, formType: 'SF-33' },
+  { pattern: /SF[-_]?26\b/i, formType: 'SF-26' },
+  { pattern: /SF[-_]?30\b/i, formType: 'SF-30' },
+  { pattern: /DD[-_]?1155/i, formType: 'DD-1155' },
+  { pattern: /DD[-_]?254/i, formType: 'DD-254' },
+  { pattern: /OF[-_]?347/i, formType: 'OF-347' },
+  { pattern: /wage.?determination|WD[-_\s]\d/i, formType: 'Wage Determination' },
+  { pattern: /davis.?bacon/i, formType: 'Wage Determination' },
+]
+
+export interface AttachmentInput {
+  id: string
+  originalName: string
+  textContent?: string
+}
+
+export interface AttachmentAnalysis {
+  id: string
+  suggestedName: string | null
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW'
+  isForm: boolean
+  formType: string | null
+}
+
+/**
+ * Detect known government form by filename pattern (no LLM needed).
+ */
+function detectFormByFilename(filename: string): { isForm: boolean; formType: string | null } {
+  for (const { pattern, formType } of FORM_PATTERNS) {
+    if (pattern.test(filename)) return { isForm: true, formType }
+  }
+  return { isForm: false, formType: null }
+}
+
+/**
+ * Batch-analyze attachments with GPT-4o to suggest human-readable names
+ * and detect government forms. Falls back to filename-only detection if OpenAI fails.
+ */
+export async function analyzeAttachments(
+  attachments: AttachmentInput[]
+): Promise<AttachmentAnalysis[]> {
+  if (!attachments.length) return []
+
+  // Pre-screen with filename patterns first
+  const filenameResults = attachments.map((att) => ({
+    id: att.id,
+    ...detectFormByFilename(att.originalName),
+  }))
+
+  // Build prompt
+  const attachmentList = attachments
+    .map(
+      (att, i) =>
+        `${i + 1}. ID: "${att.id}"\n   Filename: "${att.originalName}"${
+          att.textContent ? `\n   Content excerpt: "${att.textContent.slice(0, 400)}"` : ''
+        }`
+    )
+    .join('\n\n')
+
+  const prompt = `You are analyzing federal government solicitation attachments. For each attachment, suggest a human-readable name and detect if it is a standard government form.
+
+ATTACHMENTS:
+${attachmentList}
+
+For each attachment, return a JSON object with:
+- "id": the attachment ID (exact match, do not change)
+- "suggestedName": A clear, descriptive filename in Title Case (e.g. "Statement of Work.pdf", "SF-1449 Solicitation Form.pdf", "Wage Determination WD-2024-0001.pdf"). Keep the original file extension. Return null if the original name is already clear.
+- "confidence": "HIGH" (confident in the suggested name), "MEDIUM" (reasonable guess), or "LOW" (uncertain)
+- "isForm": true if this is a standard government form (SF-1449, SF-33, SF-26, SF-30, DD-1155, DD-254, OF-347, wage determination, etc.), false otherwise
+- "formType": the form identifier if isForm is true (e.g. "SF-1449"), null otherwise
+
+Rules:
+- Do NOT change file extensions
+- If the filename is already descriptive (e.g. "Statement_of_Work_v2.pdf"), return suggestedName: null
+- For forms, always include the form number in the suggestedName
+- Return a JSON object with key "results" containing an array of ${attachments.length} objects
+
+Return ONLY valid JSON. No markdown, no extra text.`
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0.1,
+      max_tokens: 1000,
+      response_format: { type: 'json_object' },
+    })
+
+    const raw = response.choices[0]?.message?.content || '{}'
+    const parsed = JSON.parse(raw)
+    const results: AttachmentAnalysis[] = Array.isArray(parsed)
+      ? parsed
+      : parsed.results || []
+
+    // Merge with filename detection: filename patterns take precedence for isForm/formType
+    return results.map((r) => {
+      const filenameMatch = filenameResults.find((f) => f.id === r.id)
+      return {
+        id: r.id,
+        suggestedName: r.suggestedName ?? null,
+        confidence: r.confidence ?? 'LOW',
+        isForm: filenameMatch?.isForm || r.isForm || false,
+        formType: filenameMatch?.formType || r.formType || null,
+      }
+    })
+  } catch {
+    // Fallback: return filename-only results with no suggested names
+    return attachments.map((att) => {
+      const filenameMatch = filenameResults.find((f) => f.id === att.id)!
+      return {
+        id: att.id,
+        suggestedName: null,
+        confidence: 'LOW' as const,
+        isForm: filenameMatch.isForm,
+        formType: filenameMatch.formType,
+      }
+    })
   }
 }
 

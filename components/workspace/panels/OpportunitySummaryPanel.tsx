@@ -5,6 +5,7 @@ import { format, differenceInDays } from 'date-fns'
 import type { RichAttachment } from '@/lib/types/attachment'
 import type { OpportunityBrief } from '@/lib/openai'
 import OpportunityBriefCard from './OpportunityBriefCard'
+import FormFillModal from './FormFillModal'
 
 interface OpportunitySummaryPanelProps {
   opportunity: {
@@ -87,7 +88,6 @@ export default function OpportunitySummaryPanel({
   const [samGovUrl, setSamGovUrl] = useState('')
   const [hasParsedContent, setHasParsedContent] = useState(false)
   const [parsedSummary, setParsedSummary] = useState<{ parsedCount: number; totalAttachments: number; sections: string[] } | null>(null)
-  const [parsing, setParsing] = useState(false)
   const [showAttachmentPicker, setShowAttachmentPicker] = useState(false)
   const [selectedAttachments, setSelectedAttachments] = useState<Set<string>>(new Set())
   const [viewingAttachment, setViewingAttachment] = useState<RichAttachment | null>(null)
@@ -98,13 +98,21 @@ export default function OpportunitySummaryPanel({
   const [editError, setEditError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
+  // AI analysis state
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+
+  // Form fill modal
+  const [fillingAttachment, setFillingAttachment] = useState<RichAttachment | null>(null)
+
+  // Solicitation description expansion
+  const [showSolicitation, setShowSolicitation] = useState(false)
+
   const closeViewer = useCallback(() => setViewingAttachment(null), [])
 
   const deadline = opportunity.responseDeadline ? new Date(opportunity.responseDeadline) : null
   const daysLeft = deadline ? differenceInDays(deadline, new Date()) : null
   const postedDate = opportunity.postedDate ? new Date(opportunity.postedDate) : null
 
-  const talkingPoints = generateTalkingPoints(opportunity, assessment)
   const [realDescription, setRealDescription] = useState(opportunity.description || '')
 
   // Fetch attachments on mount
@@ -144,6 +152,65 @@ export default function OpportunitySummaryPanel({
       }
     }
     fetchAttachments()
+  }, [opportunity.id])
+
+  // Auto-analyze attachments when they load (if any lack formData)
+  useEffect(() => {
+    if (!attachments.length || isAnalyzing) return
+    const needsAnalysis = attachments.some((att) => att.formData === null || att.formData === undefined)
+    if (!needsAnalysis) return
+
+    const runAnalysis = async () => {
+      setIsAnalyzing(true)
+      try {
+        const res = await fetch(`/api/opportunities/${opportunity.id}/attachments/analyze`, {
+          method: 'POST',
+        })
+        if (res.ok) {
+          // Re-fetch attachments to get updated formData
+          const attRes = await fetch(`/api/opportunities/${opportunity.id}/attachments`)
+          if (attRes.ok) {
+            const data = await attRes.json()
+            setAttachments(data.attachments || [])
+          }
+        }
+      } catch {
+        // Silent fail — analysis is best-effort
+      } finally {
+        setIsAnalyzing(false)
+      }
+    }
+
+    runAnalysis()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attachments.length > 0, opportunity.id])
+
+  // Apply AI suggested name via the existing rename flow
+  const applySuggestedName = useCallback(async (att: RichAttachment) => {
+    const suggested = att.formData?.aiSuggestedName
+    if (!suggested) return
+
+    setSaving(true)
+    try {
+      const res = await fetch(
+        `/api/opportunities/${opportunity.id}/attachments/${att.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentName: suggested }),
+        }
+      )
+      const data = await res.json()
+      if (res.ok) {
+        setAttachments((prev) =>
+          prev.map((a) => (a.id === att.id ? { ...data.attachment, formData: att.formData } : a))
+        )
+      }
+    } catch {
+      // Ignore
+    } finally {
+      setSaving(false)
+    }
   }, [opportunity.id])
 
   // Start editing an attachment name
@@ -232,241 +299,93 @@ export default function OpportunitySummaryPanel({
         </div>
       </div>
 
-      {/* FIRST FOLD */}
-      <div className="p-6 bg-white border-b border-stone-200">
+      {/* FIRST FOLD — quick actions only */}
+      <div className="px-6 py-4 bg-white border-b border-stone-200">
         <div className="max-w-4xl mx-auto">
-          {/* Header */}
-          <div className="flex items-start justify-between gap-4 mb-4">
-            <div className="flex-1">
-              <h1 className="text-xl font-semibold text-stone-900 leading-tight">
-                {opportunity.title}
-              </h1>
-              <div className="flex items-center gap-3 mt-2 text-sm text-stone-500">
-                <span>{opportunity.solicitationNumber}</span>
-                {opportunity.agency && (
-                  <>
-                    <span className="text-stone-300">•</span>
-                    <span>{opportunity.agency}</span>
-                  </>
-                )}
-              </div>
-            </div>
-            {deadline && daysLeft !== null && (
-              <div className={`flex-shrink-0 px-4 py-2 rounded-lg text-center ${
-                daysLeft <= 7 ? 'bg-stone-800 text-white' :
-                daysLeft <= 14 ? 'bg-stone-300 text-stone-800' :
-                'bg-stone-100 text-stone-700'
-              }`}>
-                <p className="text-2xl font-bold">{daysLeft <= 0 ? '!' : daysLeft}</p>
-                <p className="text-xs">{daysLeft <= 0 ? 'Expired' : 'days left'}</p>
-              </div>
-            )}
-          </div>
-
-          {/* Financial Summary */}
-          {assessment && (
-            <div className="grid grid-cols-4 gap-3 mb-4">
-              <div className="p-3 bg-stone-50 rounded-lg text-center">
-                <p className="text-xs text-stone-400">Value</p>
-                <p className="text-lg font-semibold text-stone-800">
-                  ${formatCurrency(assessment.estimatedValue)}
-                </p>
-              </div>
-              <div className="p-3 bg-stone-50 rounded-lg text-center">
-                <p className="text-xs text-stone-400">Cost</p>
-                <p className="text-lg font-semibold text-stone-800">
-                  ${formatCurrency(assessment.estimatedCost)}
-                </p>
-              </div>
-              <div className="p-3 bg-stone-50 rounded-lg text-center">
-                <p className="text-xs text-stone-400">Margin</p>
-                <p className={`text-lg font-semibold ${
-                  assessment.profitMarginPercent >= 20 ? 'text-stone-800' : 'text-stone-500'
-                }`}>
-                  {assessment.profitMarginPercent.toFixed(0)}%
-                </p>
-              </div>
-              <div className="p-3 bg-stone-50 rounded-lg text-center">
-                <p className="text-xs text-stone-400">Profit</p>
-                <p className="text-lg font-semibold text-stone-800">
-                  ${formatCurrency(assessment.profitMarginDollar)}
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Proceed */}
           <button
             onClick={onProceed}
-            className="px-4 py-2 text-sm font-medium text-stone-700 bg-stone-100 border border-stone-300 rounded hover:bg-stone-200 transition-colors inline-flex items-center gap-2"
+            className="px-4 py-2 text-sm font-medium text-white bg-stone-800 rounded hover:bg-stone-700 transition-colors inline-flex items-center gap-2"
           >
             <span>{nextStep || workflowState.action}</span>
             <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </button>
-
-          {/* Workflow progress */}
-          <div className="mt-4 flex items-center justify-center gap-2">
-            <WorkflowStep label="SOW" completed={hasSOW} active={!hasSOW} />
-            <div className="w-8 h-px bg-stone-200" />
-            <WorkflowStep label="Subs" completed={hasSubcontractors} active={hasSOW && !hasSubcontractors} />
-            <div className="w-8 h-px bg-stone-200" />
-            <WorkflowStep label="Bid" completed={hasBid} active={hasSOW && hasSubcontractors && !hasBid} />
-          </div>
         </div>
       </div>
 
       {/* BELOW FOLD */}
       <div className="p-6">
         <div className="max-w-4xl mx-auto space-y-6">
-          {/* Quick Actions */}
-          <div className="flex gap-3">
-            {hasSOW ? (
-              <button
-                onClick={onSeeSOW}
-                className="flex-1 px-4 py-2.5 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-                See SOW
-              </button>
-            ) : (
-              <button
-                onClick={() => {
-                  if (attachments.length > 0) {
-                    setSelectedAttachments(new Set(attachments.map(a => a.id)))
-                    setShowAttachmentPicker(true)
-                  } else {
-                    onGenerateSOW?.()
-                  }
-                }}
-                disabled={isGeneratingSOW}
-                className="flex-1 px-4 py-2.5 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
-              >
-                {isGeneratingSOW ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4 text-stone-500" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Generating SOW…
-                  </>
-                ) : (
-                  <>
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                    Generate SOW
-                  </>
+          {/* Overview — AI narrative + full solicitation description */}
+          <div className="p-5 bg-white border border-stone-200 rounded-lg space-y-4">
+            <h2 className="text-sm font-semibold text-stone-800">Overview</h2>
+
+            {brief?.extendedOverview ? (
+              /* Extended AI narrative — richer multi-paragraph version */
+              <div className="space-y-3">
+                {brief.extendedOverview.split(/\n+/).filter(Boolean).map((para, i) => (
+                  <p key={i} className="text-sm text-stone-700 leading-relaxed">{para}</p>
+                ))}
+              </div>
+            ) : brief?.whatTheyAreBuying ? (
+              /* Fallback: short summary from older brief */
+              <p className="text-sm text-stone-700 leading-relaxed">{brief.whatTheyAreBuying}</p>
+            ) : null}
+
+            {brief && !brief.extendedOverview && (
+              <p className="text-xs text-stone-400 italic">Regenerate the brief to get a full narrative overview.</p>
+            )}
+
+            {/* Full solicitation description — collapsible */}
+            {realDescription && (
+              <div className={brief?.whatTheyAreBuying ? 'pt-3 border-t border-stone-100' : ''}>
+                <button
+                  onClick={() => setShowSolicitation((v) => !v)}
+                  className="flex items-center gap-2 w-full text-left group"
+                >
+                  <p className="text-[10px] font-semibold text-stone-400 uppercase tracking-wider flex-1">
+                    {brief?.whatTheyAreBuying ? 'From Solicitation' : 'Description'}
+                  </p>
+                  <svg
+                    className={`h-3.5 w-3.5 text-stone-400 transition-transform flex-shrink-0 ${showSolicitation ? 'rotate-180' : ''}`}
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showSolicitation && (
+                  <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-wrap mt-2">
+                    {realDescription}
+                  </p>
                 )}
-              </button>
+              </div>
             )}
-            {hasSubcontractors ? (
-              <button
-                onClick={onSeeSubcontractors}
-                className="flex-1 px-4 py-2.5 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-                See Subcontractors
-              </button>
-            ) : (
-              <button
-                onClick={onFindSubcontractors}
-                className="flex-1 px-4 py-2.5 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                Find Subcontractors
-              </button>
+
+            {!brief?.whatTheyAreBuying && !realDescription && (
+              <p className="text-sm text-stone-400 italic">No description available.</p>
             )}
-            {hasBid ? (
-              <button
-                onClick={onSeeBid}
-                className="flex-1 px-4 py-2.5 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 transition-colors flex items-center justify-center gap-2"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-                See Bid
-              </button>
-            ) : (
-              <button
-                onClick={onCreateBid}
-                disabled={!hasSOW || !hasSubcontractors}
-                className="flex-1 px-4 py-2.5 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-                title={!hasSOW ? 'Generate SOW first' : !hasSubcontractors ? 'Find subcontractors first' : 'Create bid'}
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                </svg>
-                Create Bid
-              </button>
-            )}
-          </div>
-
-          {/* Talking Points */}
-          <div className="p-5 bg-white border border-stone-200 rounded-lg">
-            <h2 className="text-sm font-semibold text-stone-800 mb-4 flex items-center gap-2">
-              <svg className="h-4 w-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              Talking Points
-            </h2>
-            <div className="space-y-3">
-              {talkingPoints.map((point, idx) => (
-                <div key={idx} className="flex items-start gap-3">
-                  <span className="flex-shrink-0 w-5 h-5 rounded-full bg-stone-100 text-stone-500 text-xs flex items-center justify-center font-medium">
-                    {idx + 1}
-                  </span>
-                  <p className="text-sm text-stone-700 leading-relaxed">{point}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Key Details Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <DetailCard label="Agency" value={opportunity.agency} />
-            <DetailCard label="Department" value={opportunity.department} />
-            <DetailCard label="NAICS Code" value={opportunity.naicsCode} subValue={opportunity.naicsDescription} />
-            <DetailCard label="Location" value={opportunity.placeOfPerformance || opportunity.state} />
-            <DetailCard label="Set-Aside" value={formatSetAside(opportunity.setAside)} />
-            <DetailCard label="Contract Type" value={opportunity.contractType} />
-            <DetailCard
-              label="Posted"
-              value={postedDate ? format(postedDate, 'MMM d, yyyy') : undefined}
-            />
-            <DetailCard
-              label="Due"
-              value={deadline ? format(deadline, 'MMM d, yyyy h:mm a') : undefined}
-              highlight={daysLeft !== null && daysLeft <= 14}
-            />
-          </div>
-
-          {/* Scope Overview */}
-          <div className="p-5 bg-white border border-stone-200 rounded-lg">
-            <h2 className="text-sm font-semibold text-stone-800 mb-3">Scope Overview</h2>
-            <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-wrap">
-              {realDescription || 'No description provided.'}
-            </p>
           </div>
 
           {/* SAM.gov Attachments */}
           <div className="p-5 bg-white border border-stone-200 rounded-lg">
-            <h2 className="text-sm font-semibold text-stone-800 mb-3 flex items-center gap-2">
-              <svg className="h-4 w-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-              </svg>
-              Solicitation Documents
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-stone-800 flex items-center gap-2">
+                <svg className="h-4 w-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                Solicitation Documents
+              </h2>
+              {isAnalyzing && (
+                <span className="flex items-center gap-1.5 text-xs text-stone-400">
+                  <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Analyzing attachments…
+                </span>
+              )}
+            </div>
 
             {loadingAttachments ? (
               <div className="py-4 text-center text-stone-400 text-sm">
@@ -491,6 +410,8 @@ export default function OpportunitySummaryPanel({
                     }}
                     onSave={() => saveRename(att)}
                     onCancel={cancelEditing}
+                    onUseSuggestion={() => applySuggestedName(att)}
+                    onFillForm={() => setFillingAttachment(att)}
                   />
                 ))}
               </div>
@@ -513,83 +434,22 @@ export default function OpportunitySummaryPanel({
               </div>
             )}
 
-            {/* Parse Attachments */}
-            {attachments.length > 0 && (
+            {/* Parsed content indicator */}
+            {attachments.length > 0 && hasParsedContent && parsedSummary && (
               <div className="mt-3 pt-3 border-t border-stone-100">
-                {hasParsedContent && parsedSummary ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <svg className="h-4 w-4 text-stone-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      <span className="text-sm font-medium text-stone-700">
-                        {parsedSummary.parsedCount} of {parsedSummary.totalAttachments} attachments parsed
-                      </span>
-                    </div>
-                    {parsedSummary.sections.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {parsedSummary.sections.map((section) => (
-                          <span
-                            key={section}
-                            className="px-2 py-0.5 text-xs bg-stone-100 text-stone-600 rounded"
-                          >
-                            {section}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <button
-                    onClick={async () => {
-                      setParsing(true)
-                      try {
-                        const res = await fetch(`/api/opportunities/${opportunity.id}/parse-attachments`, {
-                          method: 'POST',
-                        })
-                        if (res.ok) {
-                          const data = await res.json()
-                          setHasParsedContent(true)
-                          const sections: string[] = []
-                          if (data.structured?.scope?.length) sections.push('Scope')
-                          if (data.structured?.deliverables?.length) sections.push('Deliverables')
-                          if (data.structured?.compliance?.length) sections.push('Compliance')
-                          if (data.structured?.periodOfPerformance?.length) sections.push('Period of Performance')
-                          if (data.structured?.qualifications?.length) sections.push('Qualifications')
-                          if (data.structured?.evaluation?.length) sections.push('Evaluation Criteria')
-                          setParsedSummary({
-                            parsedCount: data.parsedCount || 0,
-                            totalAttachments: data.totalAttachments || 0,
-                            sections,
-                          })
-                        }
-                      } catch (error) {
-                        console.error('Failed to parse attachments:', error)
-                      } finally {
-                        setParsing(false)
-                      }
-                    }}
-                    disabled={parsing}
-                    className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-stone-600 bg-stone-50 border border-stone-200 rounded-lg hover:bg-stone-100 disabled:opacity-50 transition-colors"
-                  >
-                    {parsing ? (
-                      <>
-                        <svg className="animate-spin h-4 w-4 text-stone-400" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Parsing documents...
-                      </>
-                    ) : (
-                      <>
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Parse Attachment Content
-                      </>
-                    )}
-                  </button>
-                )}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <svg className="h-3.5 w-3.5 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-xs text-stone-500">
+                    {parsedSummary.parsedCount} of {parsedSummary.totalAttachments} parsed
+                  </span>
+                  {parsedSummary.sections.map((section) => (
+                    <span key={section} className="px-1.5 py-0.5 text-[10px] bg-stone-100 text-stone-500 rounded">
+                      {section}
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -606,6 +466,9 @@ export default function OpportunitySummaryPanel({
               </div>
             )}
           </div>
+
+          {/* Contract Lifecycle & Action Plan */}
+          <ContractLifecycle brief={brief} opportunity={opportunity} />
         </div>
       </div>
 
@@ -682,6 +545,27 @@ export default function OpportunitySummaryPanel({
         </div>
       )}
 
+      {/* Form fill modal */}
+      {fillingAttachment && (
+        <FormFillModal
+          opportunityId={opportunity.id}
+          attachmentId={fillingAttachment.id}
+          attachmentName={fillingAttachment.currentName}
+          proxyUrl={`/api/opportunities/${opportunity.id}/attachments/${fillingAttachment.id}/proxy`}
+          existingFields={fillingAttachment.formData?.fields ?? null}
+          onClose={() => setFillingAttachment(null)}
+          onSaved={(savedFields) => {
+            setAttachments((prev) =>
+              prev.map((a) =>
+                a.id === fillingAttachment.id
+                  ? { ...a, formData: a.formData ? { ...a.formData, fields: savedFields, filledAt: new Date().toISOString() } : null }
+                  : a
+              )
+            )
+          }}
+        />
+      )}
+
       {/* Inline attachment viewer modal */}
       {viewingAttachment && (
         <div
@@ -746,6 +630,8 @@ interface AttachmentRowProps {
   onEditChange: (val: string) => void
   onSave: () => void
   onCancel: () => void
+  onUseSuggestion: () => void
+  onFillForm: () => void
 }
 
 function AttachmentRow({
@@ -760,6 +646,8 @@ function AttachmentRow({
   onEditChange,
   onSave,
   onCancel,
+  onUseSuggestion,
+  onFillForm,
 }: AttachmentRowProps) {
   const ext = getExtension(attachment.currentName)
 
@@ -798,9 +686,42 @@ function AttachmentRow({
               )}
             </div>
           ) : (
-            <p className="text-sm text-stone-700 truncate font-medium">
-              {attachment.currentName}
-            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm text-stone-700 truncate font-medium">
+                {attachment.currentName}
+              </p>
+              {/* FORM badge */}
+              {attachment.formData?.isForm && (
+                <span
+                  className="flex-shrink-0 px-1.5 py-0.5 text-[10px] font-semibold bg-stone-700 text-white rounded"
+                  title={attachment.formData.formType ?? 'Government Form'}
+                >
+                  {attachment.formData.formType ?? 'FORM'}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* AI suggested name row — only when no manual rename and suggestion exists */}
+          {!isEditing && !attachment.isEdited && attachment.formData?.aiSuggestedName && (
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className="text-xs text-stone-400 italic truncate flex-1 min-w-0">
+                Suggested: {attachment.formData.aiSuggestedName}
+              </span>
+              {attachment.formData.aiConfidence === 'MEDIUM' && (
+                <span className="flex-shrink-0 px-1 py-0.5 text-[9px] font-medium bg-amber-50 text-amber-600 border border-amber-200 rounded" title="Medium confidence">?</span>
+              )}
+              {attachment.formData.aiConfidence === 'LOW' && (
+                <span className="flex-shrink-0 px-1 py-0.5 text-[9px] font-medium bg-red-50 text-red-500 border border-red-200 rounded" title="Low confidence">?</span>
+              )}
+              <button
+                onClick={onUseSuggestion}
+                disabled={saving}
+                className="flex-shrink-0 text-[10px] font-medium text-stone-500 hover:text-stone-700 underline underline-offset-2 disabled:opacity-40 transition-colors"
+              >
+                Use suggestion
+              </button>
+            </div>
           )}
 
           {/* Metadata row */}
@@ -833,6 +754,11 @@ function AttachmentRow({
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
                   edited
+                </span>
+              )}
+              {attachment.formData?.filledAt && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium bg-stone-100 text-stone-600 rounded">
+                  filled
                 </span>
               )}
             </div>
@@ -885,6 +811,16 @@ function AttachmentRow({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
               </svg>
             </a>
+            {/* Fill Form button — only for detected forms */}
+            {attachment.formData?.isForm && (
+              <button
+                onClick={onFillForm}
+                className="px-2 py-1 text-[10px] font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded transition-colors flex-shrink-0"
+                title={`Fill ${attachment.formData.formType ?? 'form'}`}
+              >
+                Fill Form
+              </button>
+            )}
             {/* Rename */}
             <button
               onClick={onStartEdit}
@@ -902,54 +838,208 @@ function AttachmentRow({
   )
 }
 
-// ─── Helper Components ────────────────────────────────────────────────────────
+// ─── Contract Lifecycle & Action Plan ────────────────────────────────────────
 
-function WorkflowStep({ label, completed, active }: { label: string; completed?: boolean; active?: boolean }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${
-        completed ? 'bg-stone-600 text-white' :
-        active ? 'bg-stone-300 text-stone-700' :
-        'bg-stone-100 text-stone-400'
-      }`}>
-        {completed ? (
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-          </svg>
-        ) : (
-          <span>{label[0]}</span>
-        )}
-      </div>
-      <span className={`text-xs ${completed ? 'text-stone-700' : active ? 'text-stone-600' : 'text-stone-400'}`}>
-        {label}
-      </span>
-    </div>
-  )
+interface LifecyclePhase {
+  phase: string
+  timeframe: string
+  actions: string[]
+  overdeliver?: string[]
 }
 
-function DetailCard({
-  label,
-  value,
-  subValue,
-  highlight
+function buildLifecycle(
+  brief: import('@/lib/openai').OpportunityBrief | null,
+  opportunity: { contractType?: string; setAside?: string; agency?: string }
+): LifecyclePhase[] {
+  const hasDeliverables = (brief?.keyDeliverables?.length ?? 0) > 0
+  const hasClearance = (brief?.whoQualifies?.clearances?.length ?? 0) > 0
+  const isOnsite = brief?.placeOfPerformance?.siteType === 'on-site' || brief?.placeOfPerformance?.siteType === 'hybrid'
+  const hasOptions = (brief?.periodOfPerformance?.optionYears ?? 0) > 0
+
+  return [
+    {
+      phase: 'Pre-Award',
+      timeframe: 'Now through proposal submission',
+      actions: [
+        'Read every page of the solicitation — especially Section C (scope), Section F (delivery), Section H (special requirements), and Section L/M (how you\'ll be evaluated)',
+        'Identify all FAR and DFARS clauses in Section I — each one is a legal obligation you\'re agreeing to',
+        'Verify your SAM.gov registration is active and all certifications are current',
+        'Confirm your NAICS code and any size standard eligibility',
+        ...(hasClearance ? ['Begin facility clearance (FCL) process early — it can take 6–18 months'] : []),
+        'Get at minimum two subcontractor quotes — include their past performance info in your proposal',
+        'Price your bid using historical comparable data, not gut feel',
+      ],
+      overdeliver: [
+        'Submit your proposal 24–48 hours early — last-minute uploads fail more than you think',
+        'Include a one-page executive summary that mirrors the government\'s evaluation criteria',
+        'Volunteer relevant past performance proactively, even if not explicitly required',
+      ],
+    },
+    {
+      phase: 'Award & Kickoff',
+      timeframe: 'Days 1–30 after award',
+      actions: [
+        'Review the awarded contract in full — compare it to your proposal to catch any modifications',
+        'Register in Wide Area Workflow (WAWF) before your first delivery — you cannot invoice without it',
+        'Schedule the Kickoff Meeting (KOM) with your Contracting Officer (CO) and COR within 14 days',
+        'Confirm your key personnel are in place and notify the CO immediately if there are any changes',
+        ...(isOnsite ? ['Arrange site access, badges, and security processing for all on-site personnel'] : []),
+        'Set up your reporting cadence — monthly status reports, financial reports, CDRL due dates',
+        'Establish your Quality Control Plan (QCP) and submit it if required',
+        ...(hasClearance ? ['Confirm all cleared personnel are listed on the DD-254 and verify current clearances'] : []),
+      ],
+      overdeliver: [
+        'Send a one-page "Contract Start Memo" to your COR outlining your team, communication plan, and first 30-day milestones',
+        'Set up a shared document folder with the government team before the KOM',
+        'Ask your COR how they prefer to receive status updates — some want email, some want formal reports only',
+      ],
+    },
+    {
+      phase: 'Performance',
+      timeframe: `Contract period${hasOptions ? ' + option years' : ''}`,
+      actions: [
+        'Submit all CDRLs and data items on or before their due dates — late deliverables trigger cure notices',
+        'File monthly status reports (MSRs) even if nothing changed — silence looks like a problem',
+        ...(hasDeliverables ? ['Submit Inspection & Test Plans (ITPs) at least 20 days before delivery'] : []),
+        'Document everything — government witnesses, inspection results, approvals — in writing',
+        'Track spending against the funded amount and notify your CO immediately if you\'re approaching the ceiling',
+        'Respond to any government RFIs or data calls within the requested timeframe',
+        'Keep subcontractor performance records — you\'ll need them for CPARS and future bids',
+      ],
+      overdeliver: [
+        'Send a brief monthly "good news" note to your COR highlighting wins, not just status',
+        'Proactively flag potential issues before they become problems — COs reward transparency',
+        'Propose process improvements or cost-saving ideas in writing — it helps your CPARS rating',
+        'Document lessons learned mid-contract, not just at the end',
+      ],
+    },
+    ...(hasOptions ? [{
+      phase: 'Option Year Renewal',
+      timeframe: '60–90 days before each option period',
+      actions: [
+        'Confirm with your CO whether the option will be exercised — do not assume',
+        'Review your pricing for the option period against current market rates',
+        'Update subcontractor agreements and get renewed quotes if needed',
+        'Verify SAM.gov registration remains active — options cannot be exercised if you\'ve lapsed',
+        'Request a performance discussion with your COR before option exercise to surface any concerns',
+      ],
+      overdeliver: [
+        'Prepare a one-page "Year in Review" summarizing accomplishments — share it with your CO at the right moment',
+        'Propose value-added improvements or efficiencies for the option period',
+      ],
+    }] : []),
+    {
+      phase: 'Closeout',
+      timeframe: 'Final 30–60 days of performance',
+      actions: [
+        'Submit all final deliverables and obtain written acceptance from the government',
+        'File your final invoice through WAWF promptly after final acceptance',
+        'Return all Government Furnished Property (GFP) and get receipts',
+        'Respond to your CPARS evaluation within the 14-day contractor comment window — this is your permanent record',
+        'Archive all contract documentation for at least 3 years (or longer per your contract terms)',
+        'Collect past performance documentation for future proposals',
+      ],
+      overdeliver: [
+        'Ask your COR for a written letter of commendation — it supplements CPARS',
+        'Send a concise transition memo if another contractor is taking over',
+        'Request a debrief even if the closeout was smooth — you learn something every time',
+      ],
+    },
+  ]
+}
+
+function ContractLifecycle({
+  brief,
+  opportunity,
 }: {
-  label: string
-  value?: string | null
-  subValue?: string | null
-  highlight?: boolean
+  brief: import('@/lib/openai').OpportunityBrief | null
+  opportunity: { contractType?: string; setAside?: string; agency?: string }
 }) {
+  const [openPhase, setOpenPhase] = useState<string | null>(null)
+  const [showOverdeliver, setShowOverdeliver] = useState<Record<string, boolean>>({})
+
+  const phases = buildLifecycle(brief, opportunity)
+
   return (
-    <div className={`p-3 bg-white border rounded-lg ${highlight ? 'border-stone-400' : 'border-stone-200'}`}>
-      <p className="text-xs text-stone-400 mb-1">{label}</p>
-      <p className={`text-sm font-medium ${highlight ? 'text-stone-900' : 'text-stone-700'}`}>
-        {value || '—'}
+    <div className="p-5 bg-white border border-stone-200 rounded-lg space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-stone-800">Contract Lifecycle & Action Plan</h2>
+        <span className="text-[10px] text-stone-400 bg-stone-100 px-2 py-0.5 rounded">{phases.length} phases</span>
+      </div>
+      <p className="text-xs text-stone-500">
+        What to expect and do from now through contract closeout — including how to overdeliver on every phase.
       </p>
-      {subValue && (
-        <p className="text-xs text-stone-400 mt-0.5 truncate">{subValue}</p>
-      )}
+
+      <div className="space-y-2">
+        {phases.map((phase, i) => {
+          const isOpen = openPhase === phase.phase
+          const showOD = showOverdeliver[phase.phase]
+          return (
+            <div key={phase.phase} className="border border-stone-200 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setOpenPhase(isOpen ? null : phase.phase)}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-white hover:bg-stone-50 transition-colors text-left"
+              >
+                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-stone-800 text-white text-[10px] font-bold flex items-center justify-center">
+                  {i + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-stone-800">{phase.phase}</p>
+                  <p className="text-xs text-stone-400">{phase.timeframe}</p>
+                </div>
+                <svg className={`h-4 w-4 text-stone-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`}
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+
+              {isOpen && (
+                <div className="px-4 pb-4 bg-stone-50/50 space-y-3">
+                  <div className="pt-3 space-y-1.5">
+                    {phase.actions.map((action, j) => (
+                      <div key={j} className="flex items-start gap-2">
+                        <svg className="h-3.5 w-3.5 text-stone-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                        <p className="text-sm text-stone-700 leading-snug">{action}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {phase.overdeliver && phase.overdeliver.length > 0 && (
+                    <div>
+                      <button
+                        onClick={() => setShowOverdeliver(prev => ({ ...prev, [phase.phase]: !showOD }))}
+                        className="flex items-center gap-1.5 text-xs font-medium text-stone-500 hover:text-stone-700 transition-colors"
+                      >
+                        <svg className="h-3.5 w-3.5 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        {showOD ? 'Hide' : 'Show'} ways to overdeliver
+                      </button>
+                      {showOD && (
+                        <div className="mt-2 bg-amber-50 border border-amber-100 rounded-lg p-3 space-y-1.5">
+                          {phase.overdeliver.map((tip, j) => (
+                            <div key={j} className="flex items-start gap-2">
+                              <span className="text-amber-500 flex-shrink-0 mt-0.5 text-xs">⚡</span>
+                              <p className="text-xs text-amber-900 leading-snug">{tip}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
+
+// ─── Helper Components ────────────────────────────────────────────────────────
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
 
@@ -964,65 +1054,6 @@ function getWorkflowState(hasSOW?: boolean, hasSubcontractors?: boolean, hasBid?
   if (!hasSubcontractors) return { step: 2, action: 'Find Subcontractors', panel: 'subcontractors' }
   if (!hasBid) return { step: 3, action: 'Create Bid', panel: 'bid' }
   return { step: 4, action: 'Review & Submit', panel: 'bid' }
-}
-
-function generateTalkingPoints(opportunity: any, assessment: any): string[] {
-  const points: string[] = []
-
-  if (assessment) {
-    points.push(
-      `This is a $${formatCurrency(assessment.estimatedValue)} opportunity with projected ${assessment.profitMarginPercent.toFixed(0)}% margin ($${formatCurrency(assessment.profitMarginDollar)} profit).`
-    )
-  } else if (opportunity.estimatedContractValue) {
-    points.push(
-      `Estimated contract value: $${formatCurrency(opportunity.estimatedContractValue)}.`
-    )
-  }
-
-  if (opportunity.responseDeadline) {
-    const daysLeft = differenceInDays(new Date(opportunity.responseDeadline), new Date())
-    if (daysLeft <= 14) {
-      points.push(`Deadline in ${daysLeft} days - prioritize this opportunity.`)
-    } else {
-      points.push(`Response deadline: ${format(new Date(opportunity.responseDeadline), 'MMMM d, yyyy')}.`)
-    }
-  }
-
-  if (opportunity.setAside) {
-    points.push(`Set-aside: ${formatSetAside(opportunity.setAside)} - limited competition pool.`)
-  }
-
-  if (opportunity.agency) {
-    points.push(`Contracting agency: ${opportunity.agency}${opportunity.department ? ` (${opportunity.department})` : ''}.`)
-  }
-
-  if (opportunity.naicsCode) {
-    points.push(`NAICS ${opportunity.naicsCode}${opportunity.naicsDescription ? `: ${opportunity.naicsDescription}` : ''}.`)
-  }
-
-  if (opportunity.placeOfPerformance || opportunity.state) {
-    points.push(`Place of performance: ${opportunity.placeOfPerformance || opportunity.state}.`)
-  }
-
-  return points.length > 0 ? points : ['Review the solicitation details to identify key talking points.']
-}
-
-function formatSetAside(setAside?: string): string {
-  if (!setAside) return 'Full & Open'
-  const mapping: Record<string, string> = {
-    'SBA': 'Small Business',
-    'SDVOSB': 'Service-Disabled Veteran-Owned',
-    'WOSB': 'Women-Owned',
-    '8A': '8(a) Program',
-    'HUBZONE': 'HUBZone',
-  }
-  return mapping[setAside] || setAside.replace(/_/g, ' ')
-}
-
-function formatCurrency(amount: number): string {
-  if (amount >= 1000000) return `${(amount / 1000000).toFixed(1)}M`
-  if (amount >= 1000) return `${(amount / 1000).toFixed(0)}K`
-  return amount.toLocaleString()
 }
 
 function formatFileSize(bytes: number): string {

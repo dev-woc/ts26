@@ -27,6 +27,17 @@ export async function GET(
             editedBy: { select: { name: true, email: true } },
           },
         },
+        attachmentFormData: {
+          select: {
+            attachmentId: true,
+            aiSuggestedName: true,
+            aiConfidence: true,
+            isForm: true,
+            formType: true,
+            fields: true,
+            filledAt: true,
+          },
+        },
       },
     })
 
@@ -43,14 +54,29 @@ export async function GET(
       opportunity.rawData
     )
 
-    // Build a lookup map of overrides keyed by attachmentId
+    // Build lookup maps
     const overrideMap = new Map(
       opportunity.attachmentOverrides.map((o) => [o.attachmentId, o])
+    )
+    const formDataMap = new Map(
+      opportunity.attachmentFormData.map((f) => [f.attachmentId, f])
     )
 
     // Merge override data into each attachment to produce RichAttachment
     const attachments: RichAttachment[] = rawAttachments.map((att) => {
       const override = overrideMap.get(att.id)
+      const fd = formDataMap.get(att.id)
+      const formData = fd
+        ? {
+            aiSuggestedName: fd.aiSuggestedName,
+            aiConfidence: fd.aiConfidence as 'HIGH' | 'MEDIUM' | 'LOW' | null,
+            isForm: fd.isForm,
+            formType: fd.formType,
+            fields: fd.fields as Record<string, string> | null,
+            filledAt: fd.filledAt?.toISOString() ?? null,
+          }
+        : null
+
       if (override) {
         return {
           id: att.id,
@@ -63,6 +89,7 @@ export async function GET(
           postedDate: att.postedDate,
           editedAt: override.editedAt.toISOString(),
           editedBy: override.editedBy?.name || override.editedBy?.email || undefined,
+          formData,
         }
       }
       return {
@@ -74,6 +101,7 @@ export async function GET(
         type: att.type,
         size: att.size,
         postedDate: att.postedDate,
+        formData,
       }
     })
 

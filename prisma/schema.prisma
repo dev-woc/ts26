@@ -41,6 +41,7 @@ model User {
   // Attachment Rename Relations
   attachmentOverrides AttachmentOverride[]
   attachmentEdits     AttachmentEditHistory[]
+  attachmentFormData  AttachmentFormData[]
 
   @@map("users")
 }
@@ -127,6 +128,7 @@ model Opportunity {
   progress            OpportunityProgress?
   assessment          OpportunityAssessment?
   attachmentOverrides AttachmentOverride[]
+  attachmentFormData  AttachmentFormData[]
 
   @@index([solicitationNumber])
   @@index([responseDeadline])
@@ -634,4 +636,28 @@ model AttachmentEditHistory {
 
   @@index([overrideId])
   @@map("attachment_edit_history")
+}
+
+// ============ ATTACHMENT FORM DATA ============
+
+model AttachmentFormData {
+  id              String    @id @default(cuid())
+  opportunityId   String
+  attachmentId    String    // SAM.gov attachment ID (e.g. "resource-0")
+  formType        String?   // "SF-1449", "DD-254", etc. — null if not a form
+  isForm          Boolean   @default(false)
+  aiSuggestedName String?   // GPT-4o suggested human-readable name
+  aiConfidence    String?   // "HIGH", "MEDIUM", "LOW"
+  fields          Json?     // AcroForm field values: { [fieldName]: string }
+  filledAt        DateTime?
+  filledById      String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  filledBy    User?       @relation(fields: [filledById], references: [id])
+
+  @@unique([opportunityId, attachmentId])
+  @@index([opportunityId])
+  @@map("attachment_form_data")
 }

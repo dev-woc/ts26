@@ -26,4 +26,13 @@ export interface RichAttachment {
   editedAt?: string
   /** Display name of the user who last renamed the attachment */
   editedBy?: string
+  /** AI analysis and form detection data */
+  formData?: {
+    aiSuggestedName: string | null
+    aiConfidence: 'HIGH' | 'MEDIUM' | 'LOW' | null
+    isForm: boolean
+    formType: string | null
+    fields: Record<string, string> | null
+    filledAt: string | null
+  } | null
 }
