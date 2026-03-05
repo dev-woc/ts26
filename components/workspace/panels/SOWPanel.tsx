@@ -222,9 +222,8 @@ export default function SOWPanel({
     sow?.content?.sections ? convertStructuredSections(sow.content.sections) : buildDefaultSections()
   )
 
-  // 'plain' = plain language view (default), 'edit' = document-style editable view
-  const [viewMode, setViewMode] = useState<'plain' | 'edit'>('plain')
   const [isTransforming, setIsTransforming] = useState(false)
+  const [showPlainLanguage, setShowPlainLanguage] = useState(false)
   const [transformError, setTransformError] = useState('')
   const [plainCache, setPlainCache] = useState<PlainLanguageCache | null>(
     (sow?.metadata?.plainLanguage as PlainLanguageCache) ?? null
@@ -256,6 +255,11 @@ export default function SOWPanel({
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sow?.id])
+
+  // Show plain language section when cache becomes available
+  useEffect(() => {
+    if (plainCache) setShowPlainLanguage(true)
+  }, [plainCache])
 
   const buildContent = useCallback((currentSections: SOWSection[]) => ({
     header: {
@@ -291,7 +295,7 @@ export default function SOWPanel({
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Transformation failed')
       setPlainCache(data.plainLanguage)
-      setViewMode('plain')
+      setShowPlainLanguage(true)
     } catch (err) {
       setTransformError(err instanceof Error ? err.message : 'Transformation failed')
     } finally {
@@ -320,17 +324,6 @@ export default function SOWPanel({
     const newSections = sections.filter((_, i) => i !== index)
     setSections(newSections)
     handleBlurSave(newSections)
-  }
-
-  // Save + refresh (used for "Save & re-generate plain language")
-  const handleSaveAndRegenerate = async () => {
-    const content = buildContent(sections)
-    if (onSaveAndRefresh) {
-      await onSaveAndRefresh(content)
-    } else if (onSave) {
-      await onSave(content)
-    }
-    await handleTransform()
   }
 
   // ── No SOW yet ──────────────────────────────────────────────────────────
@@ -395,36 +388,6 @@ export default function SOWPanel({
             </div>
           </div>
 
-          {/* ── View toggle ── */}
-          <div className="flex items-center justify-between bg-stone-100 rounded-lg p-1">
-            <button
-              onClick={() => setViewMode('plain')}
-              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-all ${
-                viewMode === 'plain'
-                  ? 'bg-white text-stone-900 shadow-sm'
-                  : 'text-stone-500 hover:text-stone-700'
-              }`}
-            >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-              </svg>
-              Plain Language
-            </button>
-            <button
-              onClick={() => setViewMode('edit')}
-              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-medium transition-all ${
-                viewMode === 'edit'
-                  ? 'bg-white text-stone-900 shadow-sm'
-                  : 'text-stone-500 hover:text-stone-700'
-              }`}
-            >
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-              </svg>
-              Edit Sections
-            </button>
-          </div>
-
           {/* Transform error */}
           {transformError && (
             <div className="bg-stone-50 border border-stone-300 text-stone-700 text-sm px-4 py-3 rounded-lg flex items-center justify-between">
@@ -435,211 +398,202 @@ export default function SOWPanel({
             </div>
           )}
 
-          {/* ── PLAIN LANGUAGE VIEW ── */}
-          {viewMode === 'plain' && (
-            <>
-              {/* Info bar */}
-              {plainCache && (
-                <div className="flex items-center justify-between text-xs text-stone-400 px-1">
-                  <span>Plain language · simplified {format(new Date(plainCache.generatedAt), 'MMM d, yyyy')}</span>
-                  <button
-                    onClick={handleTransform}
-                    disabled={isTransforming}
-                    className="text-stone-400 hover:text-stone-600 underline underline-offset-2 disabled:opacity-50"
-                  >
-                    Re-generate
-                  </button>
-                </div>
+          {/* ── DOCUMENT — always visible, always editable ── */}
+          <div className="bg-stone-50 rounded-lg">
+            {/* Auto-save indicator */}
+            <div className="flex items-center justify-end h-6 mb-2 px-1">
+              {isSaving && (
+                <span className="flex items-center gap-1.5 text-xs text-stone-400">
+                  <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Saving…
+                </span>
               )}
-
-              {isTransforming ? (
-                <div>
-                  <p className="text-xs text-stone-400 mb-4 flex items-center gap-2">
-                    <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Simplifying with AI…
-                  </p>
-                  <TransformingSkeleton />
-                </div>
-              ) : plainCache ? (
-                <div className="space-y-4">
-                  <div className="bg-white border border-stone-200 rounded-lg p-4 text-center">
-                    <p className="text-xs font-semibold text-stone-400 uppercase tracking-widest mb-1">Plain Language Summary</p>
-                    <p className="text-sm text-stone-600">
-                      {sow.content?.opportunity?.solicitationNumber || opportunity.solicitationNumber}
-                      {(sow.content?.opportunity?.agency || opportunity.agency) && (
-                        <> · {sow.content?.opportunity?.agency || opportunity.agency}</>
-                      )}
-                    </p>
-                  </div>
-                  {plainCache.sections.map((section, idx) => (
-                    <PlainSectionCard key={idx} section={section} />
-                  ))}
-                </div>
-              ) : (
-                <div className="bg-white border border-stone-200 rounded-lg p-8 text-center">
-                  <div className="w-10 h-10 mx-auto mb-3 rounded-full bg-stone-100 flex items-center justify-center">
-                    <svg className="h-5 w-5 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm font-medium text-stone-700 mb-1">Plain language not yet generated</p>
-                  <p className="text-xs text-stone-400 mb-4">
-                    AI will rewrite this SOW in clear business language — active voice, plain English, and explanations of why each requirement matters.
-                  </p>
-                  <button
-                    onClick={handleTransform}
-                    disabled={isTransforming}
-                    className="px-4 py-2 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
-                  >
-                    Generate Plain Language Version
-                  </button>
-                </div>
+              {!isSaving && savedAt && (
+                <span className="text-xs text-stone-400">
+                  Saved ✓ {format(savedAt, 'h:mm a')}
+                </span>
               )}
-            </>
-          )}
+            </div>
 
-          {/* ── EDIT SECTIONS VIEW — Document-style layout ── */}
-          {viewMode === 'edit' && (
-            <div className="bg-stone-50 rounded-lg">
-              {/* Auto-save indicator */}
-              <div className="flex items-center justify-end h-6 mb-2 px-1">
-                {isSaving && (
-                  <span className="flex items-center gap-1.5 text-xs text-stone-400">
-                    <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Saving…
-                  </span>
-                )}
-                {!isSaving && savedAt && (
-                  <span className="text-xs text-stone-400">
-                    Saved ✓ {format(savedAt, 'h:mm a')}
-                  </span>
+            {/* Document page card */}
+            <div className="bg-white shadow-md rounded-lg overflow-hidden">
+              {/* Document header */}
+              <div className="px-10 pt-10 pb-6 border-b border-stone-200 text-center">
+                <p className="text-xs font-semibold tracking-widest uppercase text-stone-400 mb-2">
+                  Statement of Work
+                </p>
+                <h2 className="text-lg font-semibold text-stone-900 mb-1">
+                  {sow.content?.opportunity?.title || opportunity.title}
+                </h2>
+                <p className="text-sm text-stone-500">
+                  {sow.content?.opportunity?.solicitationNumber || opportunity.solicitationNumber}
+                </p>
+                <p className="text-sm text-stone-400">
+                  {sow.content?.opportunity?.agency || opportunity.agency}
+                </p>
+                {(sow.content?.opportunity?.naicsCode || opportunity.naicsCode) && (
+                  <p className="text-xs text-stone-400 mt-1">
+                    NAICS: {sow.content?.opportunity?.naicsCode || opportunity.naicsCode}
+                  </p>
                 )}
               </div>
 
-              {/* Document page card */}
-              <div className="bg-white shadow-md rounded-lg overflow-hidden">
-                {/* Document header */}
-                <div className="px-10 pt-10 pb-6 border-b border-stone-200 text-center">
-                  <p className="text-xs font-semibold tracking-widest uppercase text-stone-400 mb-2">
-                    Statement of Work
-                  </p>
-                  <h2 className="text-lg font-semibold text-stone-900 mb-1">
-                    {sow.content?.opportunity?.title || opportunity.title}
-                  </h2>
-                  <p className="text-sm text-stone-500">
-                    {sow.content?.opportunity?.solicitationNumber || opportunity.solicitationNumber}
-                  </p>
-                  <p className="text-sm text-stone-400">
-                    {sow.content?.opportunity?.agency || opportunity.agency}
-                  </p>
-                  {(sow.content?.opportunity?.naicsCode || opportunity.naicsCode) && (
-                    <p className="text-xs text-stone-400 mt-1">
-                      NAICS: {sow.content?.opportunity?.naicsCode || opportunity.naicsCode}
-                    </p>
-                  )}
-                </div>
-
-                {/* Sections — always editable */}
-                <div className="divide-y divide-stone-100">
-                  {sections.map((section, idx) => (
-                    <div key={idx} className="px-10 py-6">
-                      {/* Section header: number badge + title input */}
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="w-6 h-6 bg-stone-900 text-white text-xs font-bold rounded flex items-center justify-center flex-shrink-0">
-                          {idx + 1}
-                        </div>
-                        <input
-                          type="text"
-                          value={section.title.replace(/^\d+\.\s*/, '')}
-                          onChange={(e) => handleSectionTitleChange(idx, `${idx + 1}. ${e.target.value}`)}
-                          onBlur={() => handleBlurSave(sections)}
-                          placeholder="Section title"
-                          className="flex-1 text-sm font-semibold text-stone-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-stone-200 rounded px-1 -mx-1"
-                        />
-                        <button
-                          onClick={() => handleRemoveSection(idx)}
-                          className="text-stone-300 hover:text-stone-500 transition-colors flex-shrink-0"
-                          title="Remove section"
-                        >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
+              {/* Sections — always editable inline */}
+              <div className="divide-y divide-stone-100">
+                {sections.map((section, idx) => (
+                  <div key={idx} className="px-10 py-6">
+                    <div className="flex items-center gap-3 mb-3">
+                      <div className="w-6 h-6 bg-stone-900 text-white text-xs font-bold rounded flex items-center justify-center flex-shrink-0">
+                        {idx + 1}
                       </div>
-
-                      {/* Thin divider */}
-                      <div className="border-b border-stone-100 mb-4" />
-
-                      {/* Summary (read-only italic context) */}
-                      {section.summary && (
-                        <p className="text-xs text-stone-400 italic mb-3 leading-relaxed">
-                          {section.summary}
-                        </p>
-                      )}
-
-                      {/* Bullets (read-only, shown above body textarea) */}
-                      {section.bullets && section.bullets.length > 0 && (
-                        <ul className="mb-3 space-y-1">
-                          {section.bullets.map((bullet, bi) => (
-                            <li key={bi} className="flex items-start gap-2 text-xs text-stone-500">
-                              <span className="mt-1 h-1 w-1 rounded-full bg-stone-300 flex-shrink-0" />
-                              <span>{bullet}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-
-                      {/* Body textarea — always editable */}
-                      <textarea
-                        ref={(el) => { if (el) autoResize(el) }}
-                        value={section.details || section.content}
-                        onChange={(e) => {
-                          handleSectionContentChange(idx, e.target.value)
-                          autoResize(e.target)
-                        }}
+                      <input
+                        type="text"
+                        value={section.title.replace(/^\d+\.\s*/, '')}
+                        onChange={(e) => handleSectionTitleChange(idx, `${idx + 1}. ${e.target.value}`)}
                         onBlur={() => handleBlurSave(sections)}
-                        onInput={(e) => autoResize(e.currentTarget)}
-                        placeholder="Section body text…"
-                        rows={3}
-                        className="w-full text-sm text-stone-700 leading-relaxed bg-transparent border-none outline-none resize-none focus:ring-1 focus:ring-stone-200 rounded px-1 -mx-1"
+                        placeholder="Section title"
+                        className="flex-1 text-sm font-semibold text-stone-800 bg-transparent border-none outline-none focus:ring-1 focus:ring-stone-200 rounded px-1 -mx-1"
                       />
+                      <button
+                        onClick={() => handleRemoveSection(idx)}
+                        className="text-stone-300 hover:text-stone-500 transition-colors flex-shrink-0"
+                        title="Remove section"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
-                  ))}
-                </div>
 
-                {/* Add section */}
-                <div className="px-10 py-4 bg-stone-50 border-t border-stone-100">
-                  <button
-                    onClick={handleAddSection}
-                    className="w-full py-2 text-xs text-stone-400 hover:text-stone-600 flex items-center justify-center gap-1 transition-colors"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                    Add section
-                  </button>
-                </div>
+                    <div className="border-b border-stone-100 mb-4" />
+
+                    {section.summary && (
+                      <p className="text-xs text-stone-400 italic mb-3 leading-relaxed">
+                        {section.summary}
+                      </p>
+                    )}
+
+                    {section.bullets && section.bullets.length > 0 && (
+                      <ul className="mb-3 space-y-1">
+                        {section.bullets.map((bullet, bi) => (
+                          <li key={bi} className="flex items-start gap-2 text-xs text-stone-500">
+                            <span className="mt-1 h-1 w-1 rounded-full bg-stone-300 flex-shrink-0" />
+                            <span>{bullet}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    <textarea
+                      ref={(el) => { if (el) autoResize(el) }}
+                      value={section.details || section.content}
+                      onChange={(e) => {
+                        handleSectionContentChange(idx, e.target.value)
+                        autoResize(e.target)
+                      }}
+                      onBlur={() => handleBlurSave(sections)}
+                      onInput={(e) => autoResize(e.currentTarget)}
+                      placeholder="Section body text…"
+                      rows={3}
+                      className="w-full text-sm text-stone-700 leading-relaxed bg-transparent border-none outline-none resize-none focus:ring-1 focus:ring-stone-200 rounded px-1 -mx-1"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {/* Add section */}
+              <div className="px-10 py-4 bg-stone-50 border-t border-stone-100">
+                <button
+                  onClick={handleAddSection}
+                  className="w-full py-2 text-xs text-stone-400 hover:text-stone-600 flex items-center justify-center gap-1 transition-colors"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add section
+                </button>
               </div>
             </div>
-          )}
+          </div>
+
+          {/* ── Plain Language — collapsible section below document ── */}
+          <div className="border border-stone-200 rounded-lg overflow-hidden bg-white">
+            <button
+              onClick={() => setShowPlainLanguage(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-stone-700 hover:bg-stone-50 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                <svg className="h-3.5 w-3.5 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                </svg>
+                Plain Language Breakdown
+                {plainCache && (
+                  <span className="text-xs text-stone-400 font-normal">
+                    · {format(new Date(plainCache.generatedAt), 'MMM d, yyyy')}
+                  </span>
+                )}
+              </span>
+              <svg
+                className={`h-4 w-4 text-stone-400 transition-transform ${showPlainLanguage ? 'rotate-180' : ''}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {showPlainLanguage && (
+              <div className="border-t border-stone-100 p-4 space-y-4">
+                {isTransforming ? (
+                  <div>
+                    <p className="text-xs text-stone-400 mb-4 flex items-center gap-2">
+                      <svg className="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Simplifying with AI…
+                    </p>
+                    <TransformingSkeleton />
+                  </div>
+                ) : plainCache ? (
+                  <>
+                    <div className="flex items-center justify-between text-xs text-stone-400 px-1">
+                      <span>AI-simplified for plain English readability</span>
+                      <button
+                        onClick={handleTransform}
+                        disabled={isTransforming}
+                        className="text-stone-400 hover:text-stone-600 underline underline-offset-2 disabled:opacity-50"
+                      >
+                        Re-generate
+                      </button>
+                    </div>
+                    {plainCache.sections.map((section, idx) => (
+                      <PlainSectionCard key={idx} section={section} />
+                    ))}
+                  </>
+                ) : (
+                  <div className="text-center py-4">
+                    <p className="text-sm text-stone-600 mb-1">Plain language not yet generated</p>
+                    <p className="text-xs text-stone-400 mb-4">
+                      AI rewrites this SOW in clear business language — active voice, plain English, why each requirement matters.
+                    </p>
+                    <button
+                      onClick={handleTransform}
+                      disabled={isTransforming}
+                      className="px-4 py-2 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
+                    >
+                      Generate Plain Language Version
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* ── Actions ── */}
           <div className="flex gap-3 pt-1">
-            {viewMode === 'edit' && plainCache && (
-              <button
-                onClick={handleSaveAndRegenerate}
-                disabled={isSaving || isTransforming}
-                className="flex-1 px-4 py-3 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 disabled:opacity-50 transition-colors"
-              >
-                {isSaving || isTransforming ? 'Updating…' : 'Save & re-generate plain language'}
-              </button>
-            )}
             {sow.status === 'DRAFT' && onStatusChange && (
               <button
                 onClick={() => onStatusChange('PENDING_REVIEW')}

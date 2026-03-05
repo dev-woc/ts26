@@ -1111,8 +1111,7 @@ function LifecycleTab({ brief, opportunity }: { brief: OpportunityBrief | null |
 
 // ── Field Guide (full searchable glossary) ────────────────────────────────────
 
-function FieldGuide({ initialQuery = '' }: { initialQuery?: string }) {
-  const [query, setQuery] = useState(initialQuery)
+function FieldGuide({ query }: { query: string }) {
   const [openTerm, setOpenTerm] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
@@ -1132,22 +1131,6 @@ function FieldGuide({ initialQuery = '' }: { initialQuery?: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="relative">
-        <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input type="text" value={query} onChange={e => setQuery(e.target.value)}
-          placeholder='Search — "FAT", "CDRL", "cure notice", "FAR 52.246"…'
-          className="w-full pl-9 pr-4 py-2.5 text-sm border border-stone-200 rounded-lg bg-white focus:outline-none focus:border-stone-400" />
-        {query && (
-          <button onClick={() => setQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        )}
-      </div>
-
       {query && <p className="text-xs text-stone-400">{totalResults} result{totalResults !== 1 ? 's' : ''}</p>}
 
       <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -1426,6 +1409,7 @@ type FilterKey = 'overview' | 'compliance' | 'deliverables' | 'qualifications' |
 export default function ScopeOverviewPanel({ opportunity, assessment, brief }: ScopeOverviewPanelProps) {
   const [activeFilter, setActiveFilter] = useState<FilterKey>('overview')
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set())
+  const [glossaryQuery, setGlossaryQuery] = useState('')
 
   const structured: StructuredContent | undefined = (opportunity.parsedAttachments as any)?.structured
 
@@ -1534,6 +1518,30 @@ export default function ScopeOverviewPanel({ opportunity, assessment, brief }: S
           </div>
         </div>
 
+        {/* Glossary search — always visible */}
+        <div className="relative">
+          <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input
+            type="text"
+            value={glossaryQuery}
+            onChange={e => { setGlossaryQuery(e.target.value); if (e.target.value) setActiveFilter('fieldGuide') }}
+            placeholder='Search reference — "FAT", "CDRL", "cure notice", "FAR 52.246"…'
+            className="w-full pl-9 pr-9 py-2.5 text-sm border border-stone-200 rounded-lg bg-white focus:outline-none focus:border-stone-400"
+          />
+          {glossaryQuery && (
+            <button
+              onClick={() => setGlossaryQuery('')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+
         {/* Tab filters */}
         <div className="flex gap-2 flex-wrap">
           {FILTERS.map(f => (
@@ -1630,7 +1638,7 @@ export default function ScopeOverviewPanel({ opportunity, assessment, brief }: S
         )}
 
         {/* Field Guide / Reference */}
-        {activeFilter === 'fieldGuide' && <FieldGuide />}
+        {activeFilter === 'fieldGuide' && <FieldGuide query={glossaryQuery} />}
 
       </div>
     </div>
