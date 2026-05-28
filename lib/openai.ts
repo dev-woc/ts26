@@ -1,11 +1,15 @@
 import OpenAI from 'openai'
 
-// Singleton client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+// Lazy singleton — defer construction until first use so missing OPENAI_API_KEY
+// doesn't crash the build or unrelated API routes at module load time.
+let _openai: OpenAI | null = null
 
-export default openai
+function getOpenAI(): OpenAI {
+  if (!_openai) {
+    _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  }
+  return _openai
+}
 
 export interface SOWSection {
   title: string
@@ -107,7 +111,7 @@ Sections:
 
 Return ONLY a valid JSON array of 6 objects. No markdown, no explanation.`
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: 'gpt-4o',
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.3,
@@ -199,7 +203,7 @@ Transformation rules:
 
 Return ONLY valid JSON. No markdown fences, no extra text.`
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: 'gpt-4o',
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.3,
@@ -367,7 +371,7 @@ Keep all language plain and direct. No FAR clause numbers in plain text unless c
 
 Return ONLY valid JSON. No markdown, no extra text.`
 
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: 'gpt-4o',
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.2,
@@ -472,7 +476,7 @@ Rules:
 Return ONLY valid JSON. No markdown, no extra text.`
 
   try {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.1,
@@ -521,7 +525,7 @@ export async function generateOpportunitySynopsis(
   agency: string,
   naicsCode?: string | null
 ): Promise<string> {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: 'gpt-4o-mini',
     messages: [
       {
