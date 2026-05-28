@@ -247,14 +247,7 @@ export default function SOWPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sow])
 
-  // Auto-generate plain language on first load if SOW exists but no cache yet
-  useEffect(() => {
-    if (sow && !plainCache && !isTransforming && !hasAutoTriggered.current) {
-      hasAutoTriggered.current = true
-      handleTransform()
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sow?.id])
+  // Plain language is only generated on explicit user action — no auto-trigger.
 
   // Show plain language section when cache becomes available
   useEffect(() => {
@@ -293,6 +286,7 @@ export default function SOWPanel({
     try {
       const res = await fetch(`/api/sows/${sow.id}/transform`, { method: 'POST' })
       const data = await res.json()
+      if (res.status === 503) throw new Error('AI transform unavailable — add OPENAI_API_KEY to Vercel environment variables.')
       if (!res.ok) throw new Error(data.error || 'Transformation failed')
       setPlainCache(data.plainLanguage)
       setShowPlainLanguage(true)
