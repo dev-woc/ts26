@@ -574,7 +574,7 @@ function OpportunitySidebar({
             View SOW
           </button>
         ) : (
-          <button onClick={onGenerateSOW} disabled={generatingSOW} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 bg-stone-50 border border-stone-200 rounded hover:bg-stone-100 flex items-center gap-2 transition-colors disabled:opacity-50">
+          <button onClick={() => onGenerateSOW()} disabled={generatingSOW} className="w-full text-left px-3 py-2 text-xs font-medium text-stone-700 bg-stone-50 border border-stone-200 rounded hover:bg-stone-100 flex items-center gap-2 transition-colors disabled:opacity-50">
             {generatingSOW ? (
               <svg className="animate-spin w-2 h-2 flex-shrink-0" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
