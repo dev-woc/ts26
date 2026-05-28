@@ -53,21 +53,21 @@ export default function MarginCalculator({
   const profitPercent = value > 0 ? (profitDollar / value) * 100 : 0
 
   const getMarginColor = () => {
-    if (profitPercent >= 20) return 'text-green-600'
-    if (profitPercent >= 10) return 'text-yellow-600'
-    return 'text-red-600'
+    if (profitPercent >= 20) return 'text-stone-600'
+    if (profitPercent >= 10) return 'text-stone-600'
+    return 'text-stone-600'
   }
 
   const getMarginBg = () => {
-    if (profitPercent >= 20) return 'bg-green-50 border-green-200'
-    if (profitPercent >= 10) return 'bg-yellow-50 border-yellow-200'
-    return 'bg-red-50 border-red-200'
+    if (profitPercent >= 20) return 'bg-stone-50 border-stone-200'
+    if (profitPercent >= 10) return 'bg-stone-200 border-stone-300'
+    return 'bg-stone-50 border-stone-200'
   }
 
   const getRecommendation = () => {
-    if (profitPercent >= 20) return { text: 'GO', color: 'text-green-700', bg: 'bg-green-100' }
-    if (profitPercent >= 10) return { text: 'REVIEW', color: 'text-yellow-700', bg: 'bg-yellow-100' }
-    return { text: 'NO GO', color: 'text-red-700', bg: 'bg-red-100' }
+    if (profitPercent >= 20) return { text: 'GO', color: 'text-stone-700', bg: 'bg-stone-100' }
+    if (profitPercent >= 10) return { text: 'REVIEW', color: 'text-stone-700', bg: 'bg-stone-200' }
+    return { text: 'NO GO', color: 'text-stone-600', bg: 'bg-stone-100' }
   }
 
   const handleSave = async () => {
@@ -93,11 +93,11 @@ export default function MarginCalculator({
   const recommendation = getRecommendation()
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div className="bg-white rounded-lg shadow-sm border border-stone-200 overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-purple-600 to-pink-600 px-6 py-4">
+      <div className="bg-gradient-to-r from-stone-700 to-stone-600 px-6 py-4">
         <h3 className="text-lg font-semibold text-white">Margin Assessment</h3>
-        <p className="text-sm text-purple-100 mt-1">
+        <p className="text-sm text-stone-100 mt-1">
           Calculate profit margins to determine if this opportunity is worth pursuing
         </p>
       </div>
@@ -106,39 +106,39 @@ export default function MarginCalculator({
         {/* Calculator Inputs */}
         <div className="grid grid-cols-2 gap-6 mb-6">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-stone-700 mb-2">
               Estimated Contract Value
             </label>
             <div className="relative">
-              <span className="absolute left-3 top-3 text-gray-500">$</span>
+              <span className="absolute left-3 top-3 text-stone-500">$</span>
               <input
                 type="number"
                 value={estimatedValue}
                 onChange={(e) => setEstimatedValue(e.target.value)}
                 placeholder="0.00"
-                className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full pl-8 pr-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-400 focus:border-transparent"
               />
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-stone-500 mt-1">
               Total contract value or estimate from SAM.gov
             </p>
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-stone-700 mb-2">
               Estimated Cost
             </label>
             <div className="relative">
-              <span className="absolute left-3 top-3 text-gray-500">$</span>
+              <span className="absolute left-3 top-3 text-stone-500">$</span>
               <input
                 type="number"
                 value={estimatedCost}
                 onChange={(e) => setEstimatedCost(e.target.value)}
                 placeholder="0.00"
-                className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                className="w-full pl-8 pr-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-400 focus:border-transparent"
               />
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-stone-500 mt-1">
               Your estimated cost to complete the work
             </p>
           </div>
@@ -149,7 +149,7 @@ export default function MarginCalculator({
           <div className={`rounded-lg border-2 p-6 mb-6 ${getMarginBg()}`}>
             <div className="grid grid-cols-3 gap-6">
               <div>
-                <div className="text-xs font-semibold text-gray-600 mb-1">
+                <div className="text-xs font-semibold text-stone-600 mb-1">
                   PROFIT MARGIN ($)
                 </div>
                 <div className={`text-3xl font-bold ${getMarginColor()}`}>
@@ -158,7 +158,7 @@ export default function MarginCalculator({
               </div>
 
               <div>
-                <div className="text-xs font-semibold text-gray-600 mb-1">
+                <div className="text-xs font-semibold text-stone-600 mb-1">
                   PROFIT MARGIN (%)
                 </div>
                 <div className={`text-3xl font-bold ${getMarginColor()}`}>
@@ -167,7 +167,7 @@ export default function MarginCalculator({
               </div>
 
               <div>
-                <div className="text-xs font-semibold text-gray-600 mb-1">
+                <div className="text-xs font-semibold text-stone-600 mb-1">
                   RECOMMENDATION
                 </div>
                 <div
@@ -179,19 +179,19 @@ export default function MarginCalculator({
             </div>
 
             {/* Margin Guide */}
-            <div className="mt-4 pt-4 border-t border-gray-300">
+            <div className="mt-4 pt-4 border-t border-stone-300">
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                  <span className="text-gray-600">Good: ≥20%</span>
+                  <div className="w-3 h-3 bg-stone-600 rounded-full"></div>
+                  <span className="text-stone-600">Good: ≥20%</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                  <span className="text-gray-600">Review: 10-20%</span>
+                  <div className="w-3 h-3 bg-stone-500 rounded-full"></div>
+                  <span className="text-stone-600">Review: 10-20%</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                  <span className="text-gray-600">Low: &lt;10%</span>
+                  <div className="w-3 h-3 bg-stone-400 rounded-full"></div>
+                  <span className="text-stone-600">Low: &lt;10%</span>
                 </div>
               </div>
             </div>
@@ -201,13 +201,13 @@ export default function MarginCalculator({
         {/* Additional Factors */}
         <div className="grid grid-cols-2 gap-6 mb-6">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-stone-700 mb-2">
               Strategic Value
             </label>
             <select
               value={strategicValue}
               onChange={(e) => setStrategicValue(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-400 focus:border-transparent"
             >
               <option value="HIGH">High - Key opportunity</option>
               <option value="MEDIUM">Medium - Standard opportunity</option>
@@ -216,13 +216,13 @@ export default function MarginCalculator({
           </div>
 
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
+            <label className="block text-sm font-semibold text-stone-700 mb-2">
               Risk Level
             </label>
             <select
               value={riskLevel}
               onChange={(e) => setRiskLevel(e.target.value)}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-400 focus:border-transparent"
             >
               <option value="LOW">Low - Confident we can deliver</option>
               <option value="MEDIUM">Medium - Some concerns</option>
@@ -233,7 +233,7 @@ export default function MarginCalculator({
 
         {/* Notes */}
         <div className="mb-6">
-          <label className="block text-sm font-semibold text-gray-700 mb-2">
+          <label className="block text-sm font-semibold text-stone-700 mb-2">
             Assessment Notes
           </label>
           <textarea
@@ -241,7 +241,7 @@ export default function MarginCalculator({
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             placeholder="Add any notes about this assessment..."
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            className="w-full px-4 py-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-400 focus:border-transparent"
           />
         </div>
 
@@ -249,7 +249,7 @@ export default function MarginCalculator({
         <button
           onClick={handleSave}
           disabled={saving || !estimatedValue || !estimatedCost}
-          className="w-full px-6 py-3 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          className="w-full px-6 py-3 bg-stone-800 text-white rounded-lg font-semibold hover:bg-stone-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
         >
           {saving ? (
             <>
@@ -273,8 +273,8 @@ export default function MarginCalculator({
 
         {/* Existing Assessment Info */}
         {existingAssessment?.assessedAt && (
-          <div className="mt-4 pt-4 border-t border-gray-200">
-            <p className="text-xs text-gray-500">
+          <div className="mt-4 pt-4 border-t border-stone-200">
+            <p className="text-xs text-stone-500">
               Last assessed {new Date(existingAssessment.assessedAt).toLocaleString()}
               {existingAssessment.assessedBy && ` by ${existingAssessment.assessedBy.name}`}
             </p>

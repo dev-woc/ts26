@@ -26,6 +26,8 @@ export default function DashboardPage() {
   const [pendingSOWs, setPendingSOWs] = useState<any[]>([])
   const [opportunitiesInProgress, setOpportunitiesInProgress] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [fetching, setFetching] = useState(false)
+  const [fetchResult, setFetchResult] = useState<string | null>(null)
 
   useEffect(() => {
     if (status === 'unauthenticated') {
@@ -34,6 +36,25 @@ export default function DashboardPage() {
       fetchDashboardData()
     }
   }, [status])
+
+  const handleFetchOpportunities = async () => {
+    setFetching(true)
+    setFetchResult(null)
+    try {
+      const res = await fetch('/api/opportunities/fetch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ limit: 50, posted_days_ago: 90 }) })
+      const data = await res.json()
+      if (res.ok) {
+        setFetchResult(`Fetched ${data.saved || 0} new opportunities`)
+        fetchDashboardData()
+      } else {
+        setFetchResult(`Error: ${data.error || 'Failed to fetch'}`)
+      }
+    } catch {
+      setFetchResult('Network error fetching opportunities')
+    } finally {
+      setFetching(false)
+    }
+  }
 
   const fetchDashboardData = async () => {
     try {
@@ -112,6 +133,13 @@ export default function DashboardPage() {
         setPendingSOWs(pending.slice(0, 5))
       }
 
+      // Fetch bids count
+      const bidsResponse = await fetch('/api/bids?limit=1')
+      if (bidsResponse.ok) {
+        const bidsData = await bidsResponse.json()
+        setStats(prev => ({ ...prev, totalBids: bidsData.pagination?.total || 0 }))
+      }
+
       // Fetch assessment statistics
       const assessmentResponse = await fetch('/api/assessments/stats')
       if (assessmentResponse.ok) {
@@ -149,13 +177,27 @@ export default function DashboardPage() {
                 Welcome back, {session?.user?.name || 'User'}!
               </p>
             </div>
-            <Link
-              href="/opportunities"
-              className="px-4 py-2 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 transition-colors"
-            >
-              View All Opportunities
-            </Link>
+            <div className="flex items-center gap-3">
+              {session?.user?.role === 'ADMIN' && (
+                <button
+                  onClick={handleFetchOpportunities}
+                  disabled={fetching}
+                  className="px-4 py-2 text-sm font-medium text-stone-700 bg-white border border-stone-300 rounded-lg hover:bg-stone-50 disabled:opacity-50 transition-colors"
+                >
+                  {fetching ? 'Fetching...' : 'Fetch from SAM.gov'}
+                </button>
+              )}
+              <Link
+                href="/opportunities"
+                className="px-4 py-2 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 transition-colors"
+              >
+                View All Opportunities
+              </Link>
+            </div>
           </div>
+          {fetchResult && (
+            <p className="mt-2 text-sm text-stone-600">{fetchResult}</p>
+          )}
         </div>
       </div>
 
@@ -536,12 +578,16 @@ export default function DashboardPage() {
                   Opportunities will appear here once they are fetched from SAM.gov
                 </p>
                 {session?.user?.role === 'ADMIN' && (
-                  <button
-                    onClick={() => {/* TODO: Trigger fetch */}}
-                    className="mt-4 px-4 py-2 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 transition-colors"
-                  >
-                    Fetch Opportunities
-                  </button>
+                  <div className="mt-4 flex flex-col items-center gap-2">
+                    <button
+                      onClick={handleFetchOpportunities}
+                      disabled={fetching}
+                      className="px-4 py-2 text-sm font-medium text-white bg-stone-800 rounded-lg hover:bg-stone-700 disabled:opacity-50 transition-colors"
+                    >
+                      {fetching ? 'Fetching from SAM.gov...' : 'Fetch Opportunities from SAM.gov'}
+                    </button>
+                    {fetchResult && <p className="text-sm text-stone-600">{fetchResult}</p>}
+                  </div>
                 )}
               </div>
             ) : (

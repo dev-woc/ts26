@@ -18,6 +18,13 @@ export async function POST(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json(
+        { error: 'AI transform unavailable', message: 'OPENAI_API_KEY is not configured.' },
+        { status: 503 }
+      )
+    }
+
     const { id } = await params
 
     const sow = await prisma.sOW.findUnique({

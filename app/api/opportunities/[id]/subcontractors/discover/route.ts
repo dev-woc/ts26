@@ -141,9 +141,10 @@ export async function POST(
     const allCreateData: any[] = []
 
     // === Source 1: Google Places ===
+    let googlePlacesApiError: string | undefined
     if (isApiConfigured) {
       console.log(`[Discover] Searching Google Places: NAICS=${opportunity.naicsCode}, location="${searchLocation}", radius=${radiusMiles}mi, title="${opportunity.title?.substring(0, 50)}"`)
-      const vendors = await findSubcontractorsForOpportunity({
+      const { vendors, apiError } = await findSubcontractorsForOpportunity({
         naicsCode: opportunity.naicsCode,
         placeOfPerformance: classification.isProduct ? null : placeOfPerformance,
         stateCode: classification.isProduct ? null : stateCode,
@@ -151,6 +152,11 @@ export async function POST(
         radiusMiles: classification.isProduct ? 250 : radiusMiles,
         city: classification.isProduct ? null : city,
       })
+
+      if (apiError) {
+        googlePlacesApiError = apiError
+        console.warn(`[Discover] Google Places API error: ${apiError}`)
+      }
 
       for (const vendor of vendors) {
         if (isDuplicate(vendor)) continue
@@ -226,6 +232,12 @@ export async function POST(
         message: 'No new vendors found for this opportunity.',
         added: 0,
         geography: { city, state: stateCode, radiusMiles },
+        ...(googlePlacesApiError && {
+          googlePlacesStatus: googlePlacesApiError,
+          hint: googlePlacesApiError === 'REQUEST_DENIED'
+            ? 'Ensure the Places API is enabled at console.cloud.google.com/apis and the API key has no referrer restrictions blocking server-side requests.'
+            : 'Check the Google Places API key configuration.',
+        }),
         ...(samWarning && { samWarning }),
       })
     }

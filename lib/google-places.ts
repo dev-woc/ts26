@@ -30,6 +30,9 @@ const NAICS_SERVICE_MAP: Record<string, string[]> = {
   '238210': ['Electrical Contractor', 'Electrician'],
   '238220': ['Plumbing Contractor', 'HVAC Contractor'],
   '238910': ['Site Preparation Contractor'],
+  '334210': ['Telephone Apparatus', 'Communications Equipment'],
+  '334220': ['Communications Equipment Repair', 'Electronics Repair', 'RF Electronics'],
+  '334290': ['Communications Equipment', 'Electronic Components'],
   '334511': ['Radar Systems', 'Navigation Equipment'],
   '334519': ['Measuring Instruments', 'Testing Equipment'],
   '336411': ['Aircraft Manufacturing', 'Aerospace Contractor'],
@@ -134,17 +137,23 @@ function addressMatchesState(address: string, stateCode: string): boolean {
   return false
 }
 
+interface SearchBusinessesResult {
+  results: PlaceSearchResult[]
+  /** Set when the Places API returns a non-OK status (e.g. REQUEST_DENIED) */
+  apiError?: string
+}
+
 export async function searchBusinesses(
   query: string,
   location: string = 'United States',
   maxResults: number = 5,
   stateCode?: string | null
-): Promise<PlaceSearchResult[]> {
+): Promise<SearchBusinessesResult> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY
 
   if (!apiKey || apiKey.includes('your_actual') || apiKey.includes('your_google')) {
     console.warn('GOOGLE_PLACES_API_KEY not configured properly. Key present:', !!apiKey, 'Key length:', apiKey?.length || 0)
-    return []
+    return { results: [] }
   }
 
   try {
@@ -173,7 +182,7 @@ export async function searchBusinesses(
       if (data.status === 'REQUEST_DENIED') {
         console.error('[Google Places] Check if Places API is enabled and API key is valid')
       }
-      return []
+      return { results: [], apiError: data.status as string }
     }
 
     const allResults: PlaceSearchResult[] = data.results.map((place: any) => ({
@@ -200,10 +209,10 @@ export async function searchBusinesses(
       businesses = allResults
     }
 
-    return businesses.slice(0, maxResults)
+    return { results: businesses.slice(0, maxResults) }
   } catch (error) {
     console.error('[Google Places] Search failed:', error)
-    return []
+    return { results: [] }
   }
 }
 
@@ -247,6 +256,12 @@ export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
   }
 }
 
+export interface FindSubcontractorsResult {
+  vendors: Subcontractor[]
+  /** Set when the Places API returned a non-OK status on any search call */
+  apiError?: string
+}
+
 export async function findSubcontractorsForOpportunity(opportunity: {
   naicsCode?: string | null
   /** Full place of performance string e.g. "Anchorage, Alaska, USA" */
@@ -258,7 +273,7 @@ export async function findSubcontractorsForOpportunity(opportunity: {
   radiusMiles?: 25 | 50 | 100 | 250
   /** City name for city-level post-filtering at 25mi radius */
   city?: string | null
-}): Promise<Subcontractor[]> {
+}): Promise<FindSubcontractorsResult> {
   const { naicsCode, placeOfPerformance, stateCode, title, radiusMiles = 50, city } = opportunity
 
   // Build search queries — prioritize NAICS, then title keywords
@@ -305,16 +320,22 @@ export async function findSubcontractorsForOpportunity(opportunity: {
   const allSubcontractors: Subcontractor[] = []
   const seenNames = new Set<string>()
   const seenPlaceIds = new Set<string>()
+  let firstApiError: string | undefined
 
   // Search up to 3 queries, 5 results each, to get good coverage
   for (const query of searchQueries.slice(0, 3)) {
     // Pass stateCode so searchBusinesses can add a locationbias bounding box
-    const businesses = await searchBusinesses(query, location, 5, stateCode)
+    const searchResult = await searchBusinesses(query, location, 5, stateCode)
+
+    // Capture the first API error we encounter (e.g. REQUEST_DENIED)
+    if (searchResult.apiError && !firstApiError) {
+      firstApiError = searchResult.apiError
+    }
 
     // At 25mi: additionally post-filter by city name for tightest radius
     const filteredBusinesses = (radiusMiles === 25 && city)
-      ? businesses.filter(b => addressMatchesCity(b.address, city))
-      : businesses
+      ? searchResult.results.filter(b => addressMatchesCity(b.address, city))
+      : searchResult.results
 
     for (const business of filteredBusinesses) {
       // Deduplicate by name AND placeId
@@ -337,7 +358,10 @@ export async function findSubcontractorsForOpportunity(opportunity: {
     }
   }
 
-  return allSubcontractors
+  return {
+    vendors: allSubcontractors,
+    ...(firstApiError && { apiError: firstApiError }),
+  }
 }
 
 export interface GoogleMapsEnrichment {
@@ -365,7 +389,7 @@ export async function enrichWithGoogleMaps(
 
   try {
     const location = state ? `${state}, USA` : 'United States'
-    const results = await searchBusinesses(businessName, location, 1)
+    const { results } = await searchBusinesses(businessName, location, 1)
 
     if (results.length === 0) return null
 
