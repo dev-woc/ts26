@@ -176,6 +176,7 @@ export default function OpportunityBriefCard({
 
       {/* Period + Value row */}
       <div className="flex flex-wrap gap-4 mb-4 text-sm">
+        {brief.periodOfPerformance && (
         <div>
           <span className="text-xs font-semibold text-stone-500 uppercase tracking-wide block mb-0.5">
             Period
@@ -189,6 +190,7 @@ export default function OpportunityBriefCard({
               </span>
             )}
         </div>
+        )}
         {brief.estimatedValue && (
           <div>
             <span className="text-xs font-semibold text-stone-500 uppercase tracking-wide block mb-0.5">
