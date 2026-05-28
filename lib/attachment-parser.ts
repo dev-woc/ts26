@@ -4,9 +4,13 @@
  * extracts text content, and identifies structured solicitation data.
  */
 
-import pdfParse from 'pdf-parse/lib/pdf-parse'
 import mammoth from 'mammoth'
 import { SamAttachment } from './samgov'
+
+// Import the core parser directly (no test-file wrapper) for serverless compatibility.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pdfParse: (buf: Buffer) => Promise<{ text: string; numpages: number }> =
+  require('pdf-parse/lib/pdf-parse')
 
 export interface ParsedAttachment {
   name: string
